@@ -1,12 +1,12 @@
 dataset: # Required.
-  type: pascal_semi
+  type: costum_semi
   train:
     data_root: E:\python\ZEV\U2PL\data\st\train
     data_list: E:\python\ZEV\U2PL\data\st\train\train.txt
     unlabel_data_list: E:\python\ZEV\U2PL\data\st\train\unlabel.txt
     flip: True
     GaussianBlur: False
-    rand_resize: [0.5, 2.0]
+    #rand_resize: [1.0, 1.0]
     #rand_rotation: [-10.0, 10.0]
     crop:
       type: rand
@@ -17,16 +17,17 @@ dataset: # Required.
     crop:
       type: center
       size: [257, 257] # crop image with HxW size
-  batch_size: 2
+  batch_size: 8
   n_sup: 1464
   noise_std: 0.1
-  workers: 2
+  workers: 4
   mean: [123.675, 116.28, 103.53]
   std: [58.395, 57.12, 57.375]
   ignore_label: 255
 
 trainer: # Required.
-  epochs: 80
+  epochs: 5
+  sup_only_iter: 3000
   eval_on: True
   optimizer:
     type: SGD
@@ -64,7 +65,7 @@ criterion:
     use_weight: False
 
 net: # Required.
-  num_classes: 21
+  num_classes: 8
   sync_bn: True
   ema_decay: 0.99
   encoder:
