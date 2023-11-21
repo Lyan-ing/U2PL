@@ -1,6 +1,7 @@
 import argparse
 import copy
 import logging
+from loguru import logger as loger
 import os
 import os.path as osp
 import pprint
@@ -38,10 +39,10 @@ from u2pl.utils.utils import (
 )
 
 parser = argparse.ArgumentParser(description="Semi-Supervised Semantic Segmentation")
-parser.add_argument("--config", type=str, default="config.yaml")
+parser.add_argument("--config", type=str, default="experiments/pascal/1464/ours/config.yaml")
 parser.add_argument("--local_rank", type=int, default=0)
 parser.add_argument("--seed", type=int, default=0)
-parser.add_argument("--port", default=None, type=int)
+parser.add_argument("--port", default=1234, type=int)
 
 
 def main():
@@ -53,13 +54,13 @@ def main():
     logger = init_log("global", logging.INFO)
     logger.propagate = 0
 
-    cfg["exp_path"] = os.path.dirname(args.config)
+    cfg["exp_path"] = os.path.dirname(args.config).replace('experiments', 'ckpt')
     cfg["save_path"] = os.path.join(cfg["exp_path"], cfg["saver"]["snapshot_dir"])
 
     cudnn.enabled = True
     cudnn.benchmark = True
 
-    rank, word_size = setup_distributed(port=args.port)
+    rank, word_size = setup_distributed(port=args.port, backend='gloo')
 
     if rank == 0:
         logger.info("{}".format(pprint.pformat(cfg)))
@@ -78,6 +79,7 @@ def main():
         os.makedirs(cfg["saver"]["snapshot_dir"])
 
     # Create network
+    loger.info("============== Build student model ================")
     model = ModelBuilder(cfg["net"])
     modules_back = [model.encoder]
     if cfg["net"].get("aux_loss", False):
@@ -120,6 +122,7 @@ def main():
     )
 
     # Teacher model
+    loger.info("============== Build teacher model ================")
     model_teacher = ModelBuilder(cfg["net"])
     model_teacher = model_teacher.cuda()
     model_teacher = torch.nn.parallel.DistributedDataParallel(
@@ -278,14 +281,14 @@ def train(
         learning_rates.update(lr[0])
         lr_scheduler.step()
 
-        image_l, label_l = loader_l_iter.next()
+        image_l, label_l = next(loader_l_iter)
         batch_size, h, w = label_l.size()
         image_l, label_l = image_l.cuda(), label_l.cuda()
 
-        image_u, _ = loader_u_iter.next()
+        image_u, _ = next(loader_u_iter)  # 无标签部分的label不使用
         image_u = image_u.cuda()
 
-        if epoch < cfg["trainer"].get("sup_only_epoch", 1):
+        if i_iter < cfg["trainer"].get("sup_only_iter", 1000):
             contra_flag = "none"
             # forward
             outs = model(image_l)
@@ -301,12 +304,12 @@ def train(
                 sup_loss = sup_loss_fn(pred, label_l)
 
             model_teacher.train()
-            _ = model_teacher(image_l)
+            # _ = model_teacher(image_l)
 
             unsup_loss = 0 * rep.sum()
             contra_loss = 0 * rep.sum()
         else:
-            if epoch == cfg["trainer"].get("sup_only_epoch", 1):
+            if i_iter == cfg["trainer"].get("sup_only_iter", 1000):
                 # copy student parameters to teacher
                 with torch.no_grad():
                     for t_params, s_params in zip(
@@ -332,7 +335,7 @@ def train(
                     label_u_aug.clone(),
                     logits_u_aug.clone(),
                     mode=cfg["trainer"]["unsupervised"]["apply_aug"],
-                )
+                )  # 生成增强的数据
             else:
                 image_u_aug = image_u
 
@@ -565,7 +568,7 @@ def train(
 
         if i_iter % 10 == 0 and rank == 0:
             logger.info(
-                "[{}][{}] "
+                "[{}] [{}] "
                 "Iter [{}/{}]\t"
                 "Data {data_time.val:.2f} ({data_time.avg:.2f})\t"
                 "Time {batch_time.val:.2f} ({batch_time.avg:.2f})\t"
@@ -573,7 +576,7 @@ def train(
                 "Uns {uns_loss.val:.3f} ({uns_loss.avg:.3f})\t"
                 "Con {con_loss.val:.3f} ({con_loss.avg:.3f})\t"
                 "LR {lr.val:.5f}".format(
-                    cfg["dataset"]["n_sup"],
+                    epoch,
                     contra_flag,
                     i_iter,
                     cfg["trainer"]["epochs"] * len(loader_l),
