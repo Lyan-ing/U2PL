@@ -3,7 +3,7 @@ import math
 import os
 import os.path
 import random
-
+from PIL import Image
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -16,13 +16,19 @@ from .base import BaseDataset
 
 class voc_dset(BaseDataset):
     def __init__(
-        self, data_root, data_list, trs_form, seed=0, n_sup=10582, split="val"
+        self, data_root, data_list, data_type, trs_form, seed=0, n_sup=10582, split="val", mode='label'
     ):
-        super(voc_dset, self).__init__(data_list)
+        self.mode = mode
+        super(voc_dset, self).__init__(data_list, data_type)
         self.data_root = data_root
+        # self.mode = mode
+        if mode == 'unlabel':
+            n_sup =  len(self.list_sample)
         self.transform = trs_form
         random.seed(seed)
-        if len(self.list_sample) >= n_sup and split == "train":
+        if mode == 'unlabel':
+            self.list_sample_new = self.list_sample
+        elif len(self.list_sample) >= n_sup and split == "train":
             self.list_sample_new = random.sample(self.list_sample, n_sup)
         elif len(self.list_sample) < n_sup and split == "train":
             num_repeat = math.ceil(n_sup / len(self.list_sample))
@@ -32,12 +38,18 @@ class voc_dset(BaseDataset):
         else:
             self.list_sample_new = self.list_sample
 
+        del self.list_sample
+
     def __getitem__(self, index):
         # load image and its label
         image_path = os.path.join(self.data_root, self.list_sample_new[index][0])
-        label_path = os.path.join(self.data_root, self.list_sample_new[index][1])
+
         image = self.img_loader(image_path, "RGB")
-        label = self.img_loader(label_path, "L")
+        if self.mode == 'label':
+            label_path = os.path.join(self.data_root, self.list_sample_new[index][1])
+            label = Image.open(label_path)
+        else:
+            label = Image.fromarray(np.zeros((image.size[1], image.size[0]), dtype=np.uint8))
         image, label = self.transform(image, label)
         return image[0], label[0, 0].long()
 
@@ -82,7 +94,34 @@ def build_vocloader(split, all_cfg, seed=0):
     n_sup = cfg.get("n_sup", 10582)
     # build transform
     trs_form = build_transfrom(cfg)
-    dset = voc_dset(cfg["data_root"], cfg["data_list"], trs_form, seed, n_sup)
+    dset = voc_dset(cfg["data_root"], cfg["data_list"], trs_form=trs_form, seed=seed, n_sup=n_sup)
+
+    # build sampler
+    sample = DistributedSampler(dset)
+
+    loader = DataLoader(
+        dset,
+        batch_size=batch_size,
+        num_workers=workers,
+        sampler=sample,
+        shuffle=False,
+        pin_memory=False,
+    )
+    return loader
+
+
+def build_costum_loader(split, all_cfg, seed=0):
+    cfg_dset = all_cfg["dataset"]
+
+    cfg = copy.deepcopy(cfg_dset)
+    cfg.update(cfg.get(split, {}))
+
+    workers = cfg.get("workers", 2)
+    batch_size = cfg.get("batch_size", 1)
+    # n_sup = cfg.get("n_sup", 10582)
+    # build transform
+    trs_form = build_transfrom(cfg)
+    dset = voc_dset(cfg["data_root"], cfg["data_list"], 'costum', trs_form=trs_form, seed=seed)
 
     # build sampler
     sample = DistributedSampler(dset)
@@ -111,7 +150,7 @@ def build_voc_semi_loader(split, all_cfg, seed=0):
     # build transform
     trs_form = build_transfrom(cfg)
     trs_form_unsup = build_transfrom(cfg)
-    dset = voc_dset(cfg["data_root"], cfg["data_list"], trs_form, seed, n_sup, split)
+    dset = voc_dset(cfg["data_root"], cfg["data_list"], trs_form=trs_form, seed=seed, n_sup=n_sup, split=split)
 
     if split == "val":
         # build sampler
@@ -130,9 +169,71 @@ def build_voc_semi_loader(split, all_cfg, seed=0):
         # build sampler for unlabeled set
         data_list_unsup = cfg["data_list"].replace("labeled.txt", "unlabeled.txt")
         dset_unsup = voc_dset(
-            cfg["data_root"], data_list_unsup, trs_form_unsup, seed, n_sup, split
+            cfg["data_root"], data_list_unsup, trs_form=trs_form_unsup, seed=seed, n_sup=n_sup, split=split, mode='unlabel'
         )
 
+        sample_sup = DistributedSampler(dset)
+        loader_sup = DataLoader(
+            dset,
+            batch_size=batch_size,
+            num_workers=workers,
+            sampler=sample_sup,
+            shuffle=False,
+            pin_memory=True,
+            drop_last=True,
+        )
+
+        sample_unsup = DistributedSampler(dset_unsup)
+        loader_unsup = DataLoader(
+            dset_unsup,
+            batch_size=batch_size,
+            num_workers=workers,
+            sampler=sample_unsup,
+            shuffle=False,
+            pin_memory=True,
+            drop_last=True,
+        )
+        return loader_sup, loader_unsup
+
+
+def build_costum_semi_loader(split, all_cfg, seed=0):
+    cfg_dset = all_cfg["dataset"]
+
+    cfg = copy.deepcopy(cfg_dset)
+    cfg.update(cfg.get(split, {}))
+
+    workers = cfg.get("workers", 2)
+    batch_size = cfg.get("batch_size", 1)
+
+    # build transform
+    trs_form = build_transfrom(cfg)
+    trs_form_unsup = build_transfrom(cfg)
+
+    if split !='val':
+        # build sampler for unlabeled set
+        data_list_unsup = cfg["unlabel_data_list"]  # .replace("labeled.txt", "unlabeled.txt")
+        dset_unsup = voc_dset(
+            cfg["data_root"], data_list_unsup, 'costum', trs_form_unsup, seed, split=split, mode='unlabel'
+        )
+    n_sup = len(dset_unsup.list_sample_new) # 計算一下無標記圖像的數量，將標籤圖像重複採樣至於無標記圖像相同
+
+    dset = voc_dset(cfg["data_root"], cfg["data_list"], 'costum', trs_form, seed, n_sup, split)
+
+    if split == "val":
+        # build sampler
+        sample = DistributedSampler(dset)
+        loader = DataLoader(
+            dset,
+            batch_size=batch_size,
+            num_workers=workers,
+            sampler=sample,
+            shuffle=False,
+            pin_memory=True,
+        )
+        return loader
+
+    else:
+        # build sampler for unlabeled set
         sample_sup = DistributedSampler(dset)
         loader_sup = DataLoader(
             dset,

@@ -5,11 +5,11 @@ from torch.utils.data import Dataset
 
 
 class BaseDataset(Dataset):
-    def __init__(self, d_list, **kwargs):
+    def __init__(self, d_list, data_type, **kwargs):
         # parse the input list
-        self.parse_input_list(d_list, **kwargs)
+        self.parse_input_list(d_list, data_type, **kwargs)
 
-    def parse_input_list(self, d_list, max_sample=-1, start_idx=-1, end_idx=-1):
+    def parse_input_list(self, d_list, data_type='costum', max_sample=-1, start_idx=-1, end_idx=-1):
         logger = logging.getLogger("global")
         assert isinstance(d_list, str)
         if "cityscapes" in d_list:
@@ -24,12 +24,29 @@ class BaseDataset(Dataset):
             self.list_sample = [
                 [
                     "JPEGImages/{}.jpg".format(line.strip()),
-                    "SegmentationClassAug/{}.png".format(line.strip()),
+                    "SegmentationClass/{}.png".format(line.strip()),
                 ]
                 for line in open(d_list, "r")
             ]
+        elif data_type == 'costum':  # 自定義數據集的處理：不固定尾綴
+            if self.mode == 'label':
+                self.list_sample = [
+                    [
+                        "jpg/{}".format(line.strip()),
+                        "anno/{}.png".format(line.strip().split('.')[0]),
+                    ]
+                    for line in open(d_list, "r")
+                ]
+            elif self.mode == 'unlabel':
+                self.list_sample = [
+                    [
+                        "image_A/{}".format(line.strip()),
+                    ]
+                    for line in open(d_list, "r")
+                ]
         else:
-            raise "unknown dataset!"
+            error_info = "unknown dataset!"
+            raise error_info
 
         if max_sample > 0:
             self.list_sample = self.list_sample[0:max_sample]
@@ -43,6 +60,8 @@ class BaseDataset(Dataset):
     def img_loader(self, path, mode):
         with open(path, "rb") as f:
             img = Image.open(f)
+            # if mode=='L':
+            #     return img
             return img.convert(mode)
 
     def __len__(self):
