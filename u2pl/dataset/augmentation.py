@@ -54,8 +54,8 @@ class ToTensor(object):
     def __call__(self, image, label):
         if isinstance(image, Image.Image) and isinstance(label, Image.Image):
             image = np.asarray(image)
-            label = np.array(label) / 100  # 修改，使其能夠直接讀取png並轉化為mask，取百位获得一级标签
-            label[label == 8] = 0  # 将数据集中的背景8转化为0
+            label = np.array(label)  # / 100  # 修改，使其能夠直接讀取png並轉化為mask，取百位获得一级标签
+            # label[label == 8] = 0  # 将数据集中的背景8转化为0
             image = image.copy()
             label = label.copy()
         elif not isinstance(image, np.ndarray) or not isinstance(label, np.ndarray):

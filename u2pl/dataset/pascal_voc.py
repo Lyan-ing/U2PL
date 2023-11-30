@@ -10,20 +10,20 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
 
-from . import augmentation as psp_trsform
+from . import augmentation_label_convert as psp_trsform
 from .base import BaseDataset
 
 
 class voc_dset(BaseDataset):
     def __init__(
-        self, data_root, data_list, data_type, trs_form, seed=0, n_sup=10582, split="val", mode='label'
+            self, data_root, data_list, data_type, trs_form, seed=0, n_sup=10582, split="val", mode='label'
     ):
         self.mode = mode
         super(voc_dset, self).__init__(data_list, data_type)
         self.data_root = data_root
         # self.mode = mode
         if mode == 'unlabel':
-            n_sup =  len(self.list_sample)
+            n_sup = len(self.list_sample)
         self.transform = trs_form
         random.seed(seed)
         if mode == 'unlabel':
@@ -38,14 +38,14 @@ class voc_dset(BaseDataset):
         else:
             self.list_sample_new = self.list_sample
 
-        del self.list_sample
+        del self.list_sample  # del掉原始list，減少無用數據
 
     def __getitem__(self, index):
         # load image and its label
         image_path = os.path.join(self.data_root, self.list_sample_new[index][0])
 
         image = self.img_loader(image_path, "RGB")
-        if self.mode == 'label':
+        if self.mode == 'label':  # 無標簽數據生成全0mask
             label_path = os.path.join(self.data_root, self.list_sample_new[index][1])
             label = Image.open(label_path)
         else:
@@ -169,7 +169,8 @@ def build_voc_semi_loader(split, all_cfg, seed=0):
         # build sampler for unlabeled set
         data_list_unsup = cfg["data_list"].replace("labeled.txt", "unlabeled.txt")
         dset_unsup = voc_dset(
-            cfg["data_root"], data_list_unsup, trs_form=trs_form_unsup, seed=seed, n_sup=n_sup, split=split, mode='unlabel'
+            cfg["data_root"], data_list_unsup, trs_form=trs_form_unsup, seed=seed, n_sup=n_sup, split=split,
+            mode='unlabel'
         )
 
         sample_sup = DistributedSampler(dset)
@@ -209,13 +210,13 @@ def build_costum_semi_loader(split, all_cfg, seed=0):
     trs_form = build_transfrom(cfg)
     trs_form_unsup = build_transfrom(cfg)
 
-    if split !='val':
+    if split != 'val':
         # build sampler for unlabeled set
         data_list_unsup = cfg["unlabel_data_list"]  # .replace("labeled.txt", "unlabeled.txt")
         dset_unsup = voc_dset(
             cfg["data_root"], data_list_unsup, 'costum', trs_form_unsup, seed, split=split, mode='unlabel'
         )
-    n_sup = len(dset_unsup.list_sample_new) # 計算一下無標記圖像的數量，將標籤圖像重複採樣至於無標記圖像相同
+    n_sup = len(dset_unsup.list_sample_new)  # 計算一下無標記圖像的數量，將標籤圖像重複採樣至於無標記圖像相同
 
     dset = voc_dset(cfg["data_root"], cfg["data_list"], 'costum', trs_form, seed, n_sup, split)
 

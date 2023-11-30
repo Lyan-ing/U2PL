@@ -30,7 +30,7 @@ def get_loader(cfg, seed=0):
         val_loader = build_vocloader("val", cfg)
         logger.info("Get loader Done...")
         return train_loader_sup, train_loader_unsup, val_loader
-
+    # 實現自定義數據集半監督訓練加載模式
     elif cfg_dataset["type"] == "costum_semi":
         train_loader_sup, train_loader_unsup = build_costum_semi_loader(
             "train", cfg, seed=seed

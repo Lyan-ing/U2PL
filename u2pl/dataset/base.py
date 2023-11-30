@@ -12,7 +12,7 @@ class BaseDataset(Dataset):
     def parse_input_list(self, d_list, data_type='costum', max_sample=-1, start_idx=-1, end_idx=-1):
         logger = logging.getLogger("global")
         assert isinstance(d_list, str)
-        if "cityscapes" in d_list:
+        if data_type == "cityscapes":
             self.list_sample = [
                 [
                     line.strip(),
@@ -20,7 +20,7 @@ class BaseDataset(Dataset):
                 ]
                 for line in open(d_list, "r")
             ]
-        elif "pascal" in d_list or "VOC" in d_list:
+        elif data_type == "pascal" or data_type == "VOC":
             self.list_sample = [
                 [
                     "JPEGImages/{}.jpg".format(line.strip()),
