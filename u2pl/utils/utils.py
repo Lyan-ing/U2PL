@@ -594,7 +594,10 @@ def load_state(path, model, optimizer=None, key="state_dict"):
 
         # fix size mismatch error
         ignore_keys = []
-        state_dict = checkpoint[key]
+        if key == "naic":
+            state_dict = checkpoint
+        else:
+            state_dict = checkpoint[key]
 
         for k, v in state_dict.items():
             if k in model.state_dict().keys():
@@ -609,7 +612,7 @@ def load_state(path, model, optimizer=None, key="state_dict"):
                         )
 
         for k in ignore_keys:
-            checkpoint.pop(k)
+            state_dict.pop(k)
 
         model.load_state_dict(state_dict, strict=False)
 
@@ -622,7 +625,7 @@ def load_state(path, model, optimizer=None, key="state_dict"):
 
         if optimizer is not None:
             best_metric = checkpoint["best_miou"]
-            last_iter = checkpoint["epoch"]
+            last_iter = checkpoint["epoch"] + 1
             optimizer.load_state_dict(checkpoint["optimizer_state"])
             if rank == 0:
                 print(
