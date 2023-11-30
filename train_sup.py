@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import os.path as osp
@@ -14,6 +15,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 import yaml
 from tensorboardX import SummaryWriter
+from tqdm import tqdm
 
 from u2pl.dataset.builder import get_loader
 from u2pl.models.model_helper import ModelBuilder
@@ -32,32 +34,44 @@ from u2pl.utils.utils import (
 
 parser = argparse.ArgumentParser(description="Semi-Supervised Semantic Segmentation")
 parser.add_argument("--config", type=str, default="config.yaml")
+parser.add_argument("--resume", action='store_true')
 parser.add_argument("--local_rank", type=int, default=0)
-parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--seed", type=int, default=1)
 parser.add_argument("--port", default=None, type=int)
+parser.add_argument("--pretrain_path", default='', type=str)
 logger = init_log("global", logging.INFO)
 logger.propagate = 0
 
 
 def main():
+    from loguru import logger as loger
     global args, cfg
     args = parser.parse_args()
     seed = args.seed
     cfg = yaml.load(open(args.config, "r"), Loader=yaml.Loader)
+    # loger.info(args.port)
 
-    cfg["exp_path"] = os.path.dirname(args.config)
-    cfg["save_path"] = os.path.join(cfg["exp_path"], cfg["saver"]["snapshot_dir"])
+    cfg["exp_path"] = cfg["saver"]["exp_path"]
+    cfg["log_path"] = cfg["saver"]["log_path"]
+    cfg["task_id"] = osp.join(cfg["dataset"]["type"], cfg["saver"]["task_name"])
+    cfg["save_path"] = osp.join(cfg["exp_path"], cfg["task_id"])
+    cfg["log_save_path"] = osp.join(cfg["log_path"], cfg["task_id"])
+
+    # cfg["resume"] = True if args.resume else False
+
+    if args.pretrain_path != '':
+        cfg["trainer"]["pretrain"] = args.pretrain_path
 
     cudnn.enabled = True
     cudnn.benchmark = True
 
-    rank, word_size = setup_distributed(port=args.port)
+    rank, word_size = setup_distributed(port=args.port, backend='gloo')
 
     if rank == 0:
         logger.info("{}".format(pprint.pformat(cfg)))
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         tb_logger = SummaryWriter(
-            osp.join(cfg["exp_path"], "log/events_seg/" + current_time)
+            osp.join(cfg["log_save_path"], current_time)
         )
     else:
         tb_logger = None
@@ -66,19 +80,35 @@ def main():
         print("set random seed to", args.seed)
         set_random_seed(args.seed)
 
-    if not osp.exists(cfg["saver"]["snapshot_dir"]) and rank == 0:
-        os.makedirs(cfg["saver"]["snapshot_dir"])
+    if rank == 0:
+        os.makedirs(cfg["save_path"], exist_ok=True)
+        os.makedirs(cfg["log_save_path"], exist_ok=True)
+    model_path = None
 
-    # Create network.
-    model = ModelBuilder(cfg["net"])
-    modules_back = [model.encoder]
-    if cfg["net"].get("aux_loss", False):
-        modules_head = [model.auxor, model.decoder]
+    if cfg['trainer']['naic_path'] != '':
+        model_path = cfg['trainer']['naic_path']
+        from u2pl.naic.deeplabv3_plus import DeepLabv3_plus
+        import torch.nn as nn
+        model = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend='resnet101', os=16,
+                               pretrained=False, norm_layer=nn.BatchNorm2d)
+        if not args.resume:
+            loger.info(f"Model from NAIC DeeplabV3Plus from {model_path}..........")
+            load_state(model_path, model, key="naic")
+        # model.load_state_dict(torch.load(model_path,  map_location='cpu'), strict=False)
+        modules_back = [model.backend]
+        modules_head = [model.aspp_pooling, model.cbr_low, model.cbr_last]
+
     else:
-        modules_head = [model.decoder]
+        # Create network.
+        model = ModelBuilder(cfg["net"])
+        modules_back = [model.encoder]
+        if cfg["net"].get("aux_loss", False):
+            modules_head = [model.auxor, model.decoder]
+        else:
+            modules_head = [model.decoder]
 
-    if cfg["net"].get("sync_bn", True):
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        if cfg["net"].get("sync_bn", True):
+            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
     model.cuda()
 
@@ -97,7 +127,7 @@ def main():
     # Optimizer and lr decay scheduler
     cfg_trainer = cfg["trainer"]
     cfg_optim = cfg_trainer["optimizer"]
-    times = 10 if "pascal" in cfg["dataset"]["type"] else 1
+    times = 10  # if "pascal" in cfg["dataset"]["type"] else 1  # 这里要修改
 
     params_list = []
     for module in modules_back:
@@ -113,28 +143,36 @@ def main():
 
     best_prec = 0
     last_epoch = 0
-
+    # if not model_path:
     # auto_resume > pretrain
-    if cfg["saver"].get("auto_resume", False):
-        lastest_model = os.path.join(cfg["save_path"], "ckpt.pth")
+    if args.resume:
+        lastest_model = osp.join(cfg["save_path"], "ckpt.pth")
         if not os.path.exists(lastest_model):
             "No checkpoint found in '{}'".format(lastest_model)
-        else:
-            print(f"Resume model from: '{lastest_model}'")
+        else:  # resume
+            loger.info(f"Resume model from: '{lastest_model}'")
             best_prec, last_epoch = load_state(
                 lastest_model, model, optimizer=optimizer, key="model_state"
             )
 
-    elif cfg["saver"].get("pretrain", False):
-        load_state(cfg["saver"]["pretrain"], model, keys="model_state")
+    elif cfg["trainer"].get("pretrain", False):
+        load_state(cfg["trainer"]["pretrain"], model, key="model_state")
 
     optimizer_old = get_optimizer(params_list, cfg_optim)
     lr_scheduler = get_scheduler(
         cfg_trainer, len(train_loader_sup), optimizer_old, start_epoch=last_epoch
     )
+    with open(osp.join(cfg["save_path"], 'config.yaml'), 'w', encoding='utf-8') as yf:
+        yaml.dump(cfg, yf)
 
     # Start to train model
+    CLASSES_need = {
+        1: "liangshiqu",
+        2: "liaohuang",
+        3: "feiliangqu"
+    }
     for epoch in range(last_epoch, cfg_trainer["epochs"]):
+        # prec, iou_cls = validate(model, val_loader, epoch)
         # Training
         train(
             model,
@@ -147,7 +185,7 @@ def main():
         )
 
         # Validation and store checkpoint
-        prec = validate(model, val_loader, epoch)
+        prec, iou_cls = validate(model, val_loader, epoch)
 
         if rank == 0:
             state = {
@@ -161,10 +199,33 @@ def main():
                 best_prec = prec
                 state["best_miou"] = prec
                 torch.save(
-                    state, osp.join(cfg["saver"]["snapshot_dir"], "ckpt_best.pth")
+                    state, osp.join(cfg["save_path"], "ckpt_best.pth")
                 )
+                # 只保留权重，不保留优化器等
+                torch.save(model.state_dict(), osp.join(cfg["save_path"], "best_model.pth"))
 
-            torch.save(state, osp.join(cfg["saver"]["snapshot_dir"], "ckpt.pth"))
+            torch.save(state, osp.join(cfg["save_path"], "ckpt.pth"))
+            # write the model_param.json
+            now = datetime.now()
+
+            # 格式化日期和时间
+            datetime_begin = now.strftime("%Y-%m-%d")
+            model_type = cfg["dataset"]["type"].higher()
+            model_param_dict = {"modelName": f"DeepLabV3Plus-{model_type}-01",
+                                "baseModel": "DeepLabV3Plus",
+                                "backbone": "resnet101",
+                                "modelType": "landcover-classfication",
+                                "modelVersion": "1.0.0",
+                                "modelDescription": "模型说明",
+                                "category": list(CLASSES_need.values()),
+                                "Accuray": round(best_prec * 100, 2),
+                                "author": "...",
+                                "create-time": datetime_begin,
+                                # "end-time": datetime_end
+                                }
+
+            with open(os.path.join(cfg["save_path"], 'model_param.json'), 'w', encoding='utf-8') as ff:
+                json.dump(model_param_dict, ff, indent=4, ensure_ascii=False)
 
             logger.info(
                 "\033[31m * Currently, the best val result is: {:.2f}\033[0m".format(
@@ -172,7 +233,8 @@ def main():
                 )
             )
             tb_logger.add_scalar("mIoU val", prec, epoch)
-
+            for i, iou in enumerate(iou_cls):
+                tb_logger.add_scalar(f"IoU val{CLASSES_need[i+1]}", iou, epoch)
 
 def train(
     model,
@@ -205,7 +267,7 @@ def train(
         learning_rates.update(lr[0])
         lr_scheduler.step()
 
-        image, label = data_loader_iter.next()
+        image, label = next(data_loader_iter)
         batch_size, h, w = label.size()
         image, label = image.cuda(), label.cuda()
         outs = model(image)
@@ -231,7 +293,7 @@ def train(
         batch_end = time.time()
         batch_times.update(batch_end - batch_start)
 
-        if i_iter % 10 == 0 and rank == 0:
+        if i_iter % 20 == 0 and rank == 0:
             logger.info(
                 "Iter [{}/{}]\t"
                 "Data {data_time.val:.2f} ({data_time.avg:.2f})\t"
@@ -252,9 +314,9 @@ def train(
 
 
 def validate(
-    model,
-    data_loader,
-    epoch,
+        model,
+        data_loader,
+        epoch,
 ):
     model.eval()
     data_loader.sampler.set_epoch(epoch)
@@ -268,7 +330,7 @@ def validate(
     intersection_meter = AverageMeter()
     union_meter = AverageMeter()
 
-    for step, batch in enumerate(data_loader):
+    for batch in tqdm(data_loader):
         images, labels = batch
         images = images.cuda()
         labels = labels.long().cuda()
@@ -308,7 +370,7 @@ def validate(
             logger.info(" * class [{}] IoU {:.2f}".format(i, iou * 100))
         logger.info(" * epoch {} mIoU {:.2f}".format(epoch, mIoU * 100))
 
-    return mIoU
+    return mIoU, iou_class
 
 
 if __name__ == "__main__":

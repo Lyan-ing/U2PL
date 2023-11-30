@@ -1,5 +1,6 @@
 import argparse
 import copy
+import json
 import logging
 from loguru import logger as loger
 import os
@@ -16,7 +17,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 import yaml
 from tensorboardX import SummaryWriter
-
+from loguru import logger as loger
 from u2pl.dataset.augmentation import generate_unsup_data
 from u2pl.dataset.builder import get_loader
 from u2pl.models.model_helper import ModelBuilder
@@ -39,10 +40,12 @@ from u2pl.utils.utils import (
 )
 
 parser = argparse.ArgumentParser(description="Semi-Supervised Semantic Segmentation")
-parser.add_argument("--config", type=str, default="experiments/pascal/1464/ours/config.yaml")
+parser.add_argument("--config", type=str, default="config.yaml")
+parser.add_argument("--resume", action='store_true')
 parser.add_argument("--local_rank", type=int, default=0)
-parser.add_argument("--seed", type=int, default=0)
-parser.add_argument("--port", default=1234, type=int)
+parser.add_argument("--seed", type=int, default=1)
+parser.add_argument("--port", default=None, type=int)
+parser.add_argument("--pretrain_path", default='', type=str)
 
 
 def main():
@@ -54,8 +57,13 @@ def main():
     logger = init_log("global", logging.INFO)
     logger.propagate = 0
 
-    cfg["exp_path"] = os.path.dirname(args.config).replace('experiments', 'ckpt')
-    cfg["save_path"] = os.path.join(cfg["exp_path"], cfg["saver"]["snapshot_dir"])
+    cfg["exp_path"] = cfg["saver"]["exp_path"]
+    cfg["log_path"] = cfg["saver"]["log_path"]
+    cfg["task_id"] = osp.join(cfg["dataset"]["type"], cfg["saver"]["task_name"])
+    cfg["save_path"] = osp.join(cfg["exp_path"], cfg["task_id"])
+    cfg["log_save_path"] = osp.join(cfg["log_path"], cfg["task_id"])
+    if args.pretrain_path != '':
+        cfg["trainer"]["pretrain"] = args.pretrain_path
 
     cudnn.enabled = True
     cudnn.benchmark = True
@@ -66,7 +74,7 @@ def main():
         logger.info("{}".format(pprint.pformat(cfg)))
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         tb_logger = SummaryWriter(
-            osp.join(cfg["exp_path"], "log/events_seg/" + current_time)
+            osp.join(cfg["log_save_path"], current_time)
         )
     else:
         tb_logger = None
@@ -75,17 +83,35 @@ def main():
         print("set random seed to", args.seed)
         set_random_seed(args.seed)
 
-    if not osp.exists(cfg["saver"]["snapshot_dir"]) and rank == 0:
-        os.makedirs(cfg["saver"]["snapshot_dir"])
+    if rank == 0:
+        os.makedirs(cfg["save_path"], exist_ok=True)
+        os.makedirs(cfg["log_save_path"], exist_ok=True)
+
+    model_path = None
 
     # Create network
     loger.info("============== Build student model ================")
-    model = ModelBuilder(cfg["net"])
-    modules_back = [model.encoder]
-    if cfg["net"].get("aux_loss", False):
-        modules_head = [model.auxor, model.decoder]
+    if cfg['trainer']['naic_path'] != '':
+        model_path = cfg['trainer']['naic_path']
+        from u2pl.naic.deeplabv3_plus import DeepLabv3_plus
+        import torch.nn as nn
+        model = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend='resnet101', os=16,
+                               pretrained=False, norm_layer=nn.BatchNorm2d)
+        if not args.resume:
+            loger.info(f"Model from NAIC DeeplabV3Plus from {model_path}..........")
+            load_state(model_path, model, key="naic")
+        # model.load_state_dict(torch.load(model_path,  map_location='cpu'), strict=False)
+        modules_back = [model.backend]
+        modules_head = [model.aspp_pooling, model.cbr_low, model.cbr_last]
+
     else:
-        modules_head = [model.decoder]
+        # Create network.
+        model = ModelBuilder(cfg["net"])
+        modules_back = [model.encoder]
+        if cfg["net"].get("aux_loss", False):
+            modules_head = [model.auxor, model.decoder]
+        else:
+            modules_head = [model.decoder]
 
     if cfg["net"].get("sync_bn", True):
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -99,7 +125,7 @@ def main():
     # Optimizer and lr decay scheduler
     cfg_trainer = cfg["trainer"]
     cfg_optim = cfg_trainer["optimizer"]
-    times = 10 if "pascal" in cfg["dataset"]["type"] else 1
+    times = 10 if "pascal" in cfg["dataset"]["type"] else 1  # 这里要修改
 
     params_list = []
     for module in modules_back:
@@ -123,7 +149,18 @@ def main():
 
     # Teacher model
     loger.info("============== Build teacher model ================")
-    model_teacher = ModelBuilder(cfg["net"])
+    if cfg['trainer']['naic_path'] != '':
+        model_path = cfg['trainer']['naic_path']
+        model_teacher = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend='resnet101', os=16,
+                                       pretrained=False, norm_layer=nn.BatchNorm2d)
+        if not args.resume:
+            loger.info(f"Model from NAIC DeeplabV3Plus from {model_path}..........")
+            load_state(model_path, model_teacher, key="naic")
+        # model.load_state_dict(torch.load(model_path,  map_location='cpu'), strict=False)
+
+    else:
+        # Create network.
+        model_teacher = ModelBuilder(cfg["net"])
     model_teacher = model_teacher.cuda()
     model_teacher = torch.nn.parallel.DistributedDataParallel(
         model_teacher,
@@ -139,12 +176,12 @@ def main():
     last_epoch = 0
 
     # auto_resume > pretrain
-    if cfg["saver"].get("auto_resume", False):
+    if args.resume:
         lastest_model = os.path.join(cfg["save_path"], "ckpt.pth")
         if not os.path.exists(lastest_model):
             "No checkpoint found in '{}'".format(lastest_model)
         else:
-            print(f"Resume model from: '{lastest_model}'")
+            loger.info(f"Resume model from: '{lastest_model}'")
             best_prec, last_epoch = load_state(
                 lastest_model, model, optimizer=optimizer, key="model_state"
             )
@@ -152,9 +189,9 @@ def main():
                 lastest_model, model_teacher, optimizer=optimizer, key="teacher_state"
             )
 
-    elif cfg["saver"].get("pretrain", False):
-        load_state(cfg["saver"]["pretrain"], model, key="model_state")
-        load_state(cfg["saver"]["pretrain"], model_teacher, key="teacher_state")
+    elif cfg["trainer"].get("pretrain", False):
+        load_state(cfg["trainer"]["pretrain"], model, key="model_state")
+        load_state(cfg["trainer"]["pretrain"], model_teacher, key="teacher_state")
 
     optimizer_start = get_optimizer(params_list, cfg_optim)
     lr_scheduler = get_scheduler(
@@ -181,6 +218,9 @@ def main():
         )
     ).cuda()
 
+    with open(osp.join(cfg["save_path"], 'config.yaml'), 'w', encoding='utf-8') as yf:
+        yaml.dump(cfg, yf)
+
     # Start to train model
     for epoch in range(last_epoch, cfg_trainer["epochs"]):
         # Training
@@ -205,14 +245,15 @@ def main():
             if rank == 0:
                 logger.info("start evaluation")
 
-            if epoch < cfg["trainer"].get("sup_only_epoch", 1):
-                prec = validate(model, val_loader, epoch, logger)
+            if epoch < cfg["trainer"].get("sup_only_epoch",
+                                          1):  # i_iter == cfg["trainer"].get("sup_only_iter", 1000): #epoch < cfg["trainer"].get("sup_only_epoch", 1):
+                prec, iou_cls = validate(model, val_loader, epoch, logger)
             else:
-                prec = validate(model_teacher, val_loader, epoch, logger)
+                prec, iou_cls = validate(model_teacher, val_loader, epoch, logger)
 
             if rank == 0:
                 state = {
-                    "epoch": epoch + 1,
+                    "epoch": epoch,
                     "model_state": model.state_dict(),
                     "optimizer_state": optimizer.state_dict(),
                     "teacher_state": model_teacher.state_dict(),
@@ -221,10 +262,33 @@ def main():
                 if prec > best_prec:
                     best_prec = prec
                     torch.save(
-                        state, osp.join(cfg["saver"]["snapshot_dir"], "ckpt_best.pth")
+                        state, osp.join(cfg["save_path"], "ckpt_best.pth")
                     )
+                    # 只保留权重，不保留优化器等
+                    torch.save(model.state_dict(), osp.join(cfg["save_path"], "best_model.pth"))
+                    # write the model_param.json
+                    now = datetime.now()
 
-                torch.save(state, osp.join(cfg["saver"]["snapshot_dir"], "ckpt.pth"))
+                    # 格式化日期和时间
+                    datetime_begin = now.strftime("%Y-%m-%d")
+                    model_type = cfg["dataset"]["type"].higher()
+                    model_param_dict = {"modelName": f"DeepLabV3Plus-{model_type}-01",
+                                        "baseModel": "DeepLabV3Plus",
+                                        "backbone": "resnet101",
+                                        "modelType": "landcover-classfication",
+                                        "modelVersion": "1.0.0",
+                                        "modelDescription": "模型说明",
+                                        # "category": list(CLASSES_need.values()),
+                                        "Accuray": round(best_prec * 100, 2),
+                                        "author": "...",
+                                        "create-time": datetime_begin,
+                                        # "end-time": datetime_end
+                                        }
+
+                    with open(os.path.join(cfg["save_path"], 'model_param.json'), 'w', encoding='utf-8') as ff:
+                        json.dump(model_param_dict, ff, indent=4, ensure_ascii=False)
+
+                torch.save(state, osp.join(cfg["save_path"], "ckpt.pth"))
 
                 logger.info(
                     "\033[31m * Currently, the best val result is: {:.2f}\033[0m".format(
@@ -232,22 +296,24 @@ def main():
                     )
                 )
                 tb_logger.add_scalar("mIoU val", prec, epoch)
+                for i, iou in enumerate(iou_cls):
+                    tb_logger.add_scalar(f"IoU val{i}", iou, epoch)
 
 
 def train(
-    model,
-    model_teacher,
-    optimizer,
-    lr_scheduler,
-    sup_loss_fn,
-    loader_l,
-    loader_u,
-    epoch,
-    tb_logger,
-    logger,
-    memobank,
-    queue_ptrlis,
-    queue_size,
+        model,
+        model_teacher,
+        optimizer,
+        lr_scheduler,
+        sup_loss_fn,
+        loader_l,
+        loader_u,
+        epoch,
+        tb_logger,
+        logger,
+        memobank,
+        queue_ptrlis,
+        queue_size,
 ):
     global prototype
     ema_decay_origin = cfg["net"]["ema_decay"]
@@ -313,7 +379,7 @@ def train(
                 # copy student parameters to teacher
                 with torch.no_grad():
                     for t_params, s_params in zip(
-                        model_teacher.parameters(), model.parameters()
+                            model_teacher.parameters(), model.parameters()
                     ):
                         t_params.data = s_params.data
 
@@ -328,7 +394,7 @@ def train(
 
             # apply strong data augmentation: cutout, cutmix, or classmix
             if np.random.uniform(0, 1) < 0.5 and cfg["trainer"]["unsupervised"].get(
-                "apply_aug", False
+                    "apply_aug", False
             ):
                 image_u_aug, label_u_aug, logits_u_aug = generate_unsup_data(
                     image_u,
@@ -398,7 +464,7 @@ def train(
                     cfg_contra["low_rank"], cfg_contra["high_rank"]
                 )
                 alpha_t = cfg_contra["low_entropy_threshold"] * (
-                    1 - epoch / cfg["trainer"]["epochs"]
+                        1 - epoch / cfg["trainer"]["epochs"]
                 )
 
                 with torch.no_grad():
@@ -409,7 +475,7 @@ def train(
                         entropy[label_u_aug != 255].cpu().numpy().flatten(), alpha_t
                     )
                     low_entropy_mask = (
-                        entropy.le(low_thresh).float() * (label_u_aug != 255).bool()
+                            entropy.le(low_thresh).float() * (label_u_aug != 255).bool()
                     )
 
                     high_thresh = np.percentile(
@@ -417,7 +483,7 @@ def train(
                         100 - alpha_t,
                     )
                     high_entropy_mask = (
-                        entropy.ge(high_thresh).float() * (label_u_aug != 255).bool()
+                            entropy.ge(high_thresh).float() * (label_u_aug != 255).bool()
                     )
 
                     low_mask_all = torch.cat(
@@ -446,9 +512,9 @@ def train(
                             (
                                 (label_l.unsqueeze(1) != 255).float(),
                                 torch.ones(logits_u_aug.shape)
-                                .float()
-                                .unsqueeze(1)
-                                .cuda(),
+                                    .float()
+                                    .unsqueeze(1)
+                                    .cuda(),
                             ),
                         )
                     high_mask_all = F.interpolate(
@@ -516,9 +582,9 @@ def train(
 
                 dist.all_reduce(contra_loss)
                 contra_loss = (
-                    contra_loss
-                    / world_size
-                    * cfg["trainer"]["contrastive"].get("loss_weight", 1)
+                        contra_loss
+                        / world_size
+                        * cfg["trainer"]["contrastive"].get("loss_weight", 1)
                 )
 
             else:
@@ -531,23 +597,23 @@ def train(
         optimizer.step()
 
         # update teacher model with EMA
-        if epoch >= cfg["trainer"].get("sup_only_epoch", 1):
-            with torch.no_grad():
+        if i_iter >= cfg["trainer"].get("sup_only_iter", 1000):  # epoch >= cfg["trainer"].get("sup_only_epoch", 1):
+            with torch.no_grad():  # ema权重
                 ema_decay = min(
                     1
                     - 1
                     / (
-                        i_iter
-                        - len(loader_l) * cfg["trainer"].get("sup_only_epoch", 1)
-                        + 1
+                            i_iter
+                            - cfg["trainer"].get("sup_only_iter", 1000)
+                            + 1
                     ),
                     ema_decay_origin,
                 )
                 for t_params, s_params in zip(
-                    model_teacher.parameters(), model.parameters()
+                        model_teacher.parameters(), model.parameters()
                 ):
                     t_params.data = (
-                        ema_decay * t_params.data + (1 - ema_decay) * s_params.data
+                            ema_decay * t_params.data + (1 - ema_decay) * s_params.data
                     )
 
         # gather all loss from different gpus
@@ -596,10 +662,10 @@ def train(
 
 
 def validate(
-    model,
-    data_loader,
-    epoch,
-    logger,
+        model,
+        data_loader,
+        epoch,
+        logger,
 ):
     model.eval()
     data_loader.sampler.set_epoch(epoch)
