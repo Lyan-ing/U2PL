@@ -3,6 +3,7 @@ import os
 import random
 from collections import OrderedDict
 
+import loguru
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -288,7 +289,7 @@ def sample_from_bank(cutmix_bank, conf, smooth=False):
 
 
 def generate_cutmix_mask(
-    pred, sample_cat, area_thresh=0.0001, no_pad=False, no_slim=False
+        pred, sample_cat, area_thresh=0.0001, no_pad=False, no_slim=False
 ):
     h, w = pred.shape[0], pred.shape[1]
     valid_mask = np.zeros((h, w))
@@ -300,14 +301,14 @@ def generate_cutmix_mask(
             pred, sample_cat, area_thresh, no_pad=no_pad, no_slim=no_slim
         )
     y0, x0, y1, x1 = rectangles
-    valid_mask[int(y0) : int(y1), int(x0) : int(x1)] = 1
+    valid_mask[int(y0): int(y1), int(x0): int(x1)] = 1
     valid_mask = torch.from_numpy(valid_mask).long().cuda()
 
     return valid_mask
 
 
 def update_cutmix_bank(
-    cutmix_bank, preds_teacher_unsup, img_id, sample_id, area_thresh=0.0001
+        cutmix_bank, preds_teacher_unsup, img_id, sample_id, area_thresh=0.0001
 ):
     # cutmix_bank [num_classes, len(dataset)]
     # preds_teacher_unsup [2,num_classes,h,w]
@@ -343,9 +344,9 @@ def update_cutmix_mask(pred_map, num_classes):
     values = np.unique(pred_map)
     for idx in range(num_classes):
         if idx not in values:
-            rectangles[4 * idx + 4 : 4 * idx + 8] = [0, 0, 0, 0]
+            rectangles[4 * idx + 4: 4 * idx + 8] = [0, 0, 0, 0]
             continue
-        rectangles[4 * idx + 4 : 4 * idx + 8] = generate_cutmix(pred_map, idx)
+        rectangles[4 * idx + 4: 4 * idx + 8] = generate_cutmix(pred_map, idx)
     return rectangles
 
 
@@ -416,7 +417,7 @@ def dynamic_copy_paste(images_sup, labels_sup, query_cat):
 
 
 def cal_category_confidence(
-    preds_student_sup, preds_student_unsup, gt, preds_teacher_unsup, num_classes
+        preds_student_sup, preds_student_unsup, gt, preds_teacher_unsup, num_classes
 ):
     category_confidence = torch.zeros(num_classes).type(torch.float32)
     preds_student_sup = F.softmax(preds_student_sup, dim=1)
@@ -428,7 +429,7 @@ def cal_category_confidence(
         else:
             conf_map_sup = preds_student_sup[:, ind, :, :]
             value = torch.sum(conf_map_sup * cat_mask_sup_gt) / (
-                torch.sum(cat_mask_sup_gt) + 1e-12
+                    torch.sum(cat_mask_sup_gt) + 1e-12
             )
         category_confidence[ind] = value
 
@@ -580,8 +581,8 @@ def intersectionAndUnion(output, target, K, ignore_index=255):
     return area_intersection, area_union, area_target
 
 
-def load_state(path, model, optimizer=None, key="state_dict"):
-    rank = dist.get_rank()
+def load_state(path, model, optimizer=None, key="state_dict", type="module"):
+    rank = 0
 
     def map_func(storage, location):
         return storage.cuda()
@@ -591,6 +592,12 @@ def load_state(path, model, optimizer=None, key="state_dict"):
             print("=> loading checkpoint '{}'".format(path))
 
         checkpoint = torch.load(path, map_location=map_func)
+        if type == "no_module":
+            checkpoints = {}
+            for k,v in checkpoint.items():
+                if k[:6]=="module":
+                    checkpoints[k[7:]]=v
+            checkpoint = checkpoints
 
         # fix size mismatch error
         ignore_keys = []
@@ -625,7 +632,7 @@ def load_state(path, model, optimizer=None, key="state_dict"):
 
         if optimizer is not None:
             best_metric = checkpoint["best_miou"]
-            last_iter = checkpoint["epoch"] + 1
+            last_iter = checkpoint["epoch"]
             optimizer.load_state_dict(checkpoint["optimizer_state"])
             if rank == 0:
                 print(
@@ -633,7 +640,8 @@ def load_state(path, model, optimizer=None, key="state_dict"):
                         path, last_iter
                     )
                 )
-            return best_metric, last_iter
+                loguru.logger.info(f"Now, the best miou is [{best_metric}]")
+            return best_metric, last_iter + 1
     else:
         if rank == 0:
             print("=> no checkpoint found at '{}'".format(path))
