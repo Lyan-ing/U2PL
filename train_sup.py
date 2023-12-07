@@ -6,6 +6,7 @@ import os.path as osp
 import pprint
 import random
 import time
+from copy import deepcopy
 from datetime import datetime
 
 import numpy as np
@@ -36,7 +37,7 @@ parser = argparse.ArgumentParser(description="Semi-Supervised Semantic Segmentat
 parser.add_argument("--config", type=str, default="config.yaml")
 parser.add_argument("--resume", action='store_true')
 parser.add_argument("--local_rank", type=int, default=0)
-parser.add_argument("--seed", type=int, default=1)
+parser.add_argument("--seed", type=int, default=10081)
 parser.add_argument("--port", default=None, type=int)
 parser.add_argument("--pretrain_path", default='', type=str)
 logger = init_log("global", logging.INFO)
@@ -53,14 +54,17 @@ def main():
 
     cfg["exp_path"] = cfg["saver"]["exp_path"]
     cfg["log_path"] = cfg["saver"]["log_path"]
-    cfg["task_id"] = osp.join(cfg["dataset"]["type"], cfg["saver"]["task_name"])
+    cfg["task_id"] = osp.join(cfg["dataset"]["type"], cfg["saver"]["task_name"], cfg["saver"]["task_idx"])
     cfg["save_path"] = osp.join(cfg["exp_path"], cfg["task_id"])
     cfg["log_save_path"] = osp.join(cfg["log_path"], cfg["task_id"])
 
     # cfg["resume"] = True if args.resume else False
+    wether_resume = os.path.exists(osp.join(cfg["save_path"], "ckpt.pth"))
+    if not wether_resume:
+        args.resume = False
 
     if args.pretrain_path != '':
-        cfg["trainer"]["pretrain"] = args.pretrain_path
+        cfg["net"]["pretrain"] = args.pretrain_path
 
     cudnn.enabled = True
     cudnn.benchmark = True
@@ -85,19 +89,24 @@ def main():
         os.makedirs(cfg["log_save_path"], exist_ok=True)
     model_path = None
 
-    if cfg['trainer']['naic_path'] != '':
-        model_path = cfg['trainer']['naic_path']
+    if cfg['net']['base_model'] == "naic":
+        # model_path = cfg['trainer']['naic_path']
         from u2pl.naic.deeplabv3_plus import DeepLabv3_plus
         import torch.nn as nn
         model = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend='resnet101', os=16,
                                pretrained=False, norm_layer=nn.BatchNorm2d)
-        if not args.resume:
-            loger.info(f"Model from NAIC DeeplabV3Plus from {model_path}..........")
-            load_state(model_path, model, key="naic")
+        # if not args.resume:
+        #     loger.info(f"Model from NAIC DeeplabV3Plus from {model_path}..........")
+        #     load_state(model_path, model, key="naic")
         # model.load_state_dict(torch.load(model_path,  map_location='cpu'), strict=False)
         modules_back = [model.backend]
         modules_head = [model.aspp_pooling, model.cbr_low, model.cbr_last]
-
+    elif cfg['net']["base_model"] == "unet":
+        from u2pl.unet.unet import Unet
+        model = Unet(num_classes=cfg["net"]["num_classes"], pretrained=False, backbone="resnet50")
+        modules_back = [model.resnet]
+        modules_head = [model.up_concat1, model.up_concat2, model.up_concat3, model.up_concat4, model.final]
+        # model.freeze_backbone()
     else:
         # Create network.
         model = ModelBuilder(cfg["net"])
@@ -155,8 +164,14 @@ def main():
                 lastest_model, model, optimizer=optimizer, key="model_state"
             )
 
-    elif cfg["trainer"].get("pretrain", False):
-        load_state(cfg["trainer"]["pretrain"], model, key="model_state")
+    elif cfg["net"].get("pretrain", False):
+        if cfg["net"]["base_model"] == "naic":
+            load_state(cfg["net"]["pretrain"], model, key="naic")
+        elif cfg["net"]["base_model"] == "unet":
+            load_state(cfg["net"]["pretrain"], model, key="naic")
+        else:
+            load_state(cfg["net"]["pretrain"], model, key="model_state")
+
 
     optimizer_old = get_optimizer(params_list, cfg_optim)
     lr_scheduler = get_scheduler(
@@ -167,10 +182,36 @@ def main():
 
     # Start to train model
     CLASSES_need = {
-        1: "liangshiqu",
-        2: "liaohuang",
-        3: "feiliangqu"
+        0: "background",
+        1: "building",
+        2: "grass",
+        3: "tree",
+        4: "water",
+        5: "tea"
     }
+    # CLASSES_need = {
+    #     0: "laingshi",
+    #     1: "laohuang",
+    #     2: "feiliang",
+    #     # 3: "tree",
+    #     # 4: "water",
+    #     # 5: "tea"
+    # }
+
+    # test(model, osp.join(cfg["dataset"]["val"]["data_root"], "jpg"), osp.join(cfg["dataset"]["val"]["data_root"], "anno"), osp.join(cfg["dataset"]["val"]["data_root"], "pred3"))
+    now = datetime.now()
+    # 格式化日期和时间
+    datetime_begin = now.strftime("%Y-%m-%d %H:%M:%S")
+    if not args.resume:
+        with open(osp.join(cfg["save_path"], 'log.json'), 'w', encoding='utf-8') as log:
+            json.dump(f"==================BEGIN the Training at {datetime_begin}=================", log)
+            log.write('\n')
+            log.flush()
+    else:
+        with open(osp.join(cfg["save_path"], 'log.json'), 'a', encoding='utf-8') as log:
+            json.dump(f"=================RESUME the Training at {datetime_begin}=================", log)
+            log.write('\n')
+            log.flush()
     for epoch in range(last_epoch, cfg_trainer["epochs"]):
         # prec, iou_cls = validate(model, val_loader, epoch)
         # Training
@@ -209,10 +250,11 @@ def main():
             now = datetime.now()
 
             # 格式化日期和时间
-            datetime_begin = now.strftime("%Y-%m-%d")
-            model_type = cfg["dataset"]["type"].higher()
-            model_param_dict = {"modelName": f"DeepLabV3Plus-{model_type}-01",
-                                "baseModel": "DeepLabV3Plus",
+            datetime_end = now.strftime("%Y-%m-%d %H:%M:%S")
+            model_type = cfg["net"]["base_model"].capitalize()
+            task_type = cfg["dataset"]["type"].capitalize()
+            model_param_dict = {"modelName": f"{model_type}-{task_type}-01",
+                                "baseModel": f"{model_type}",
                                 "backbone": "resnet101",
                                 "modelType": "landcover-classfication",
                                 "modelVersion": "1.0.0",
@@ -220,7 +262,7 @@ def main():
                                 "category": list(CLASSES_need.values()),
                                 "Accuray": round(best_prec * 100, 2),
                                 "author": "...",
-                                "create-time": datetime_begin,
+                                "create-time": datetime_end,
                                 # "end-time": datetime_end
                                 }
 
@@ -232,18 +274,23 @@ def main():
                     best_prec * 100
                 )
             )
-            tb_logger.add_scalar("mIoU val", prec, epoch)
+            tb_logger.add_scalar("mIoU", prec, epoch)
             for i, iou in enumerate(iou_cls):
-                tb_logger.add_scalar(f"IoU val{CLASSES_need[i+1]}", iou, epoch)
+                tb_logger.add_scalar(f"IoU/{CLASSES_need[i]}", iou, epoch)
+    with open(osp.join(cfg["save_path"], 'log.json'), 'a', encoding='utf-8') as log:
+        json.dump(f"==================END the Training at {datetime_end}=================", log)
+        log.write('\n')
+        log.flush()
 
-def train(
-    model,
-    optimizer,
-    lr_scheduler,
-    criterion,
-    data_loader,
-    epoch,
-    tb_logger,
+
+def train(  # 蓝，青，绿
+        model,
+        optimizer,
+        lr_scheduler,
+        criterion,
+        data_loader,
+        epoch,
+        tb_logger,
 ):
     model.train()
 
@@ -252,65 +299,90 @@ def train(
 
     rank, world_size = dist.get_rank(), dist.get_world_size()
 
-    losses = AverageMeter(10)
-    data_times = AverageMeter(10)
-    batch_times = AverageMeter(10)
-    learning_rates = AverageMeter(10)
+    losses = AverageMeter(20)
+    data_times = AverageMeter(20)
+    batch_times = AverageMeter(20)
+    learning_rates = AverageMeter(20)
 
     batch_end = time.time()
-    for step in range(len(data_loader)):
-        batch_start = time.time()
-        data_times.update(batch_start - batch_end)
+    with open(osp.join(cfg["save_path"], 'log.json'), 'a', encoding='utf-8') as log:
+        # json.dump(cfg, log)
+        all_epoch = cfg["trainer"]["epochs"]
+        all_iter = cfg["trainer"]["epochs"]*len(data_loader)
+        for step in range(len(data_loader)):
+            batch_start = time.time()
+            data_times.update(batch_start - batch_end)
 
-        i_iter = epoch * len(data_loader) + step
-        lr = lr_scheduler.get_lr()
-        learning_rates.update(lr[0])
-        lr_scheduler.step()
+            i_iter = epoch * len(data_loader) + step
+            lr = lr_scheduler.get_lr()
+            learning_rates.update(lr[0])
+            lr_scheduler.step()
 
-        image, label = next(data_loader_iter)
-        batch_size, h, w = label.size()
-        image, label = image.cuda(), label.cuda()
-        outs = model(image)
-        pred = outs["pred"]
-        pred = F.interpolate(pred, (h, w), mode="bilinear", align_corners=True)
+            image, label = next(data_loader_iter)
+            batch_size, h, w = label.size()
+            image, label = image.cuda(), label.cuda()
+            outs = model(image)
+            pred = outs["pred"]
+            pred = F.interpolate(pred, (h, w), mode="bilinear", align_corners=True)
 
-        if "aux_loss" in cfg["net"].keys():
-            aux = outs["aux"]
-            aux = F.interpolate(aux, (h, w), mode="bilinear", align_corners=True)
-            loss = criterion([pred, aux], label)
-        else:
-            loss = criterion(pred, label)
+            if "aux_loss" in cfg["net"].keys():
+                aux = outs["aux"]
+                aux = F.interpolate(aux, (h, w), mode="bilinear", align_corners=True)
+                loss = criterion([pred, aux], label)
+            else:
+                loss = criterion(pred, label)
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        # gather all loss from different gpus
-        reduced_loss = loss.clone().detach()
-        dist.all_reduce(reduced_loss)
-        losses.update(reduced_loss.item())
+            # gather all loss from different gpus
+            reduced_loss = loss.clone().detach()
+            dist.all_reduce(reduced_loss)
+            losses.update(reduced_loss.item())
 
-        batch_end = time.time()
-        batch_times.update(batch_end - batch_start)
+            batch_end = time.time()
+            batch_times.update(batch_end - batch_start)
 
-        if i_iter % 20 == 0 and rank == 0:
-            logger.info(
-                "Iter [{}/{}]\t"
-                "Data {data_time.val:.2f} ({data_time.avg:.2f})\t"
-                "Time {batch_time.val:.2f} ({batch_time.avg:.2f})\t"
-                "Loss {loss.val:.4f} ({loss.avg:.4f})\t"
-                "LR {lr.val:.5f} ({lr.avg:.5f})\t".format(
-                    i_iter,
-                    cfg["trainer"]["epochs"] * len(data_loader),
-                    data_time=data_times,
-                    batch_time=batch_times,
-                    loss=losses,
-                    lr=learning_rates,
+            if i_iter % 20 == 0 and rank == 0:
+
+                logger.info(
+                    "Iter [{}/{}]\t"
+                    "Data {data_time.val:.2f} ({data_time.avg:.2f})\t"
+                    "Time {batch_time.val:.2f} ({batch_time.avg:.2f})\t"
+                    "Loss {loss.val:.4f} ({loss.avg:.4f})\t"
+                    "LR {lr.val:.5f} ({lr.avg:.5f})\t".format(
+                        i_iter,
+                        all_iter,
+                        data_time=data_times,
+                        batch_time=batch_times,
+                        loss=losses,
+                        lr=learning_rates,
+                    )
                 )
-            )
-
-            tb_logger.add_scalar("lr", learning_rates.avg, i_iter)
-            tb_logger.add_scalar("Loss", losses.avg, i_iter)
+                dict_json = {"FLAG": "[Train]", "Epoch": f"[{epoch}/{all_epoch}]", "Iter": f"[{i_iter}/{all_iter}]",
+                             "Loss": f"{losses.val:.4f} ({losses.avg:.4f}) ",
+                             "LR": f"{learning_rates.val:.5f} ({learning_rates.avg:.5f})",
+                             "Time": f"{batch_times.val:.2f} ({batch_times.avg:.2f})"}
+                json.dump(dict_json, log)
+                # "FLAG: [Train]    Epoch [{}/{}]    Iter [{}/{}]    "
+                # "Data {data_time.val:.2f} ({data_time.avg:.2f})    "
+                # "Time {batch_time.val:.2f} ({batch_time.avg:.2f})    "
+                # "Loss {loss.val:.4f} ({loss.avg:.4f})    "
+                # "LR {lr.val:.5f} ({lr.avg:.5f})".format(
+                #     epoch,
+                #     cfg["trainer"]["epochs"],
+                #     i_iter,
+                #     cfg["trainer"]["epochs"] * len(data_loader),
+                #     data_time=data_times,
+                #     batch_time=batch_times,
+                #     loss=losses,
+                #     lr=learning_rates,
+                # )
+                log.write('\n')
+                log.flush()
+                tb_logger.add_scalar("lr", learning_rates.avg, i_iter)
+                tb_logger.add_scalar("Loss", losses.avg, i_iter)
 
 
 def validate(
@@ -329,48 +401,121 @@ def validate(
 
     intersection_meter = AverageMeter()
     union_meter = AverageMeter()
+    with open(osp.join(cfg["save_path"], 'log.json'), 'a', encoding='utf-8') as log:
+        for batch in tqdm(data_loader):
+            images, labels = batch
+            images = images.cuda()
+            labels = labels.long().cuda()
+            batch_size, h, w = labels.shape
 
-    for batch in tqdm(data_loader):
-        images, labels = batch
-        images = images.cuda()
-        labels = labels.long().cuda()
-        batch_size, h, w = labels.shape
+            with torch.no_grad():
+                outs = model(images)
 
-        with torch.no_grad():
-            outs = model(images)
+            # get the output produced by model_teacher
+            output = outs["pred"]
+            output = F.interpolate(output, (h, w), mode="bilinear", align_corners=True)
+            output = output.data.max(1)[1].cpu().numpy()
+            target_origin = labels.cpu().numpy()
 
-        # get the output produced by model_teacher
-        output = outs["pred"]
-        output = F.interpolate(output, (h, w), mode="bilinear", align_corners=True)
-        output = output.data.max(1)[1].cpu().numpy()
-        target_origin = labels.cpu().numpy()
+            # start to calculate miou
+            intersection, union, target = intersectionAndUnion(
+                output, target_origin, num_classes, ignore_label
+            )
 
-        # start to calculate miou
-        intersection, union, target = intersectionAndUnion(
-            output, target_origin, num_classes, ignore_label
-        )
+            # gather all validation information
+            reduced_intersection = torch.from_numpy(intersection).cuda()
+            reduced_union = torch.from_numpy(union).cuda()
+            reduced_target = torch.from_numpy(target).cuda()
 
-        # gather all validation information
-        reduced_intersection = torch.from_numpy(intersection).cuda()
-        reduced_union = torch.from_numpy(union).cuda()
-        reduced_target = torch.from_numpy(target).cuda()
+            dist.all_reduce(reduced_intersection)
+            dist.all_reduce(reduced_union)
+            dist.all_reduce(reduced_target)
 
-        dist.all_reduce(reduced_intersection)
-        dist.all_reduce(reduced_union)
-        dist.all_reduce(reduced_target)
+            intersection_meter.update(reduced_intersection.cpu().numpy())
+            union_meter.update(reduced_union.cpu().numpy())
 
-        intersection_meter.update(reduced_intersection.cpu().numpy())
-        union_meter.update(reduced_union.cpu().numpy())
+        iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
+        mIoU = np.mean(iou_class)
+        json.dump("FLAG: [Val]    Epoch [{}/{}]    mIoU [{}]".format(
+            epoch, cfg["trainer"]["epochs"], round(mIoU * 100, 2), ), log)
+        log.write('\n')
+        log.flush()
 
-    iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
-    mIoU = np.mean(iou_class)
+        if rank == 0:
+            for i, iou in enumerate(iou_class):
+                logger.info(" * class [{}] IoU {:.2f}".format(i, iou * 100))
+            logger.info(" * epoch {} mIoU {:.2f}".format(epoch, mIoU * 100))
 
-    if rank == 0:
-        for i, iou in enumerate(iou_class):
-            logger.info(" * class [{}] IoU {:.2f}".format(i, iou * 100))
-        logger.info(" * epoch {} mIoU {:.2f}".format(epoch, mIoU * 100))
+        return mIoU, iou_class
 
-    return mIoU, iou_class
+
+def test(
+        model,
+        data_root,
+        label_root,
+        save_root,
+):
+    import cv2
+    from torchvision import transforms
+    # 加载模型
+    os.makedirs(save_root, exist_ok=True)
+    model.eval()
+
+    # 预处理图像
+    preprocess = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+    # 如果有GPU可用，则将模型移到GPU上
+    if torch.cuda.is_available():
+        model.to('cuda')
+
+    # 遍历文件夹中的所有图像
+    # 创建一个颜色图，以便于可视化
+    # palette = torch.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1])
+    # colors = torch.as_tensor([i for i in range(3)])[:, None] * palette
+    # colors = (colors % 255).numpy().astype("uint8")
+    # 定义三原色
+    red = np.array([255, 255, 0])
+    green = np.array([0, 255, 0])
+    blue = np.array([0, 0, 255])
+
+    # 创建一个1x3的图像，并填充三原色
+    colors = np.array([red, green, blue])
+    for filename in os.listdir(data_root):
+        if filename.endswith('.jpg') or filename.endswith('.png'):
+            # 加载图像
+            image = cv2.imread(os.path.join(data_root, filename))
+            label = cv2.imread(os.path.join(label_root, filename))
+            vis_label = deepcopy(label)
+            vis_label[label > 1] = 2
+            vis_label = vis_label[:, :, 0]
+
+            # 预处理图像
+            input_tensor = preprocess(image)
+            input_batch = input_tensor.unsqueeze(0)  # create a mini-batch as expected by the model
+
+            # 如果有GPU可用，则将输入张量移到GPU上
+            if torch.cuda.is_available():
+                input_batch = input_batch.to('cuda')
+
+            # 进行预测
+            with torch.no_grad():
+                output = model(input_batch)['pred'][0]
+            output_predictions = output.argmax(0)
+
+            # 将预测结果映射到颜色图上
+            output_predictions = output_predictions.byte().cpu().numpy()
+            output_vis = colors[output_predictions]
+            # ori_vis = colors[image]
+            label_vis = colors[vis_label]
+            label_vis[label == 14] = 0
+            output_vis[label == 14] = 0
+            merge = np.concatenate((image, label_vis, output_vis), axis=1)
+
+            # 保存结果
+            cv2.imwrite(os.path.join(save_root, filename), merge)
 
 
 if __name__ == "__main__":
