@@ -66,8 +66,11 @@ class ToTensor(object):
             ori_label = deepcopy(label)
             if self.label_sict:  # 标签转换，loss权重设置一些，背景的loss比例设小
                 #
-                label[ori_label < 2] = 0
-                label[ori_label > 1] = 1
+                # label[ori_label ==6] = 5
+                # label[ori_label == 7] = 6
+                # label[ori_label == 9] = 7
+                # label[ori_label == 12] = 8
+                label[ori_label > 1] = 2
                 label[ori_label == 14] = 14
 
             image = image.copy()
