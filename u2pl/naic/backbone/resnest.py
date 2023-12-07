@@ -3,7 +3,7 @@ import math
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 # from torchsummary import summary
-from utils_Deeplab import SyncBN2d
+from ..backbone import SyncBN2d
 from resnest.torch import resnest101, resnest50
 
 

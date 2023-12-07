@@ -69,7 +69,7 @@ class DeepLabv3_plus(nn.Module):
         x = torch.cat([x, low_features], dim=1)
         x = self.cbr_last(x)
         x = F.interpolate(x, size=(h, w), mode='bilinear', align_corners=True)
-        return x
+        return {"pred": x}
     #
     # def get_1x_lr_params(self):
     #     modules = [self.backend]

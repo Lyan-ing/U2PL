@@ -237,4 +237,4 @@ if __name__ == "__main__":
     model.eval()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
-    summary(model, (3, 512, 512))
+    # summary(model, (3, 512, 512))

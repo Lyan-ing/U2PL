@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 import math
-from utils_Deeplab import SyncBN2d
+from ..backbone import SyncBN2d
 
 __all__ = ['MobileNetV2', 'mobilenet_v2']
 
