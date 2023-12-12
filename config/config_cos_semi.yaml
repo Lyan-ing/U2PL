@@ -18,15 +18,15 @@ dataset: # Required.
       type: center
       size: [257, 257] # crop image with HxW size
   batch_size: 8
-  n_sup: 1464
   noise_std: 0.1
   workers: 4
   mean: [123.675, 116.28, 103.53]
   std: [58.395, 57.12, 57.375]
-  ignore_label: 255
+  ignore_label: 255  #
 
 trainer: # Required.
   epochs: 5
+  naic_path: 'E:\python\ZEV\U2PL\ckpt\pretrain\last_try_best\42_Deeplabv3.pth'
   sup_only_iter: 3000
   eval_on: True
   optimizer:
@@ -56,8 +56,9 @@ trainer: # Required.
     temperature: 0.5
 
 saver:
-  snapshot_dir: ckpt
-  pretrain: ''
+  exp_path: ckpt
+  log_path: log
+  task_name: guangxi_3
 
 criterion:
   type: CELoss
@@ -66,10 +67,12 @@ criterion:
 
 net: # Required.
   num_classes: 8
+  base_model: unet
+  pretrain: ''
   sync_bn: True
-  ema_decay: 0.99
+  ema_decay: 0.999
   encoder:
-    type: u2pl.models.resnet.resnet50
+    type: u2pl.models.resnet.resnet101
     kwargs:
       multi_grid: True
       zero_init_residual: True

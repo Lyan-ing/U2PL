@@ -1,37 +1,38 @@
 dataset: # Required.
-  type: pascal
+  type: costum
   train:
-    data_root: ../../../../data/VOC2012
-    data_list: ../../../../data/splits/pascal/1464/labeled.txt
+    data_root: E:\dataset\voc\VOCdevkit\VOC2007
+    data_list: E:\dataset\voc\VOCdevkit\VOC2007\train.txt
     flip: True
     GaussianBlur: False
-    rand_resize: [0.5, 2.0]
+#    rand_resize: [0.5, 2.0]
     #rand_rotation: [-10.0, 10.0]
     crop:
       type: rand
-      size: [513, 513] # crop image with HxW size
+      size: [512, 512] # crop image with HxW size
   val:
-    data_root: ../../../../data/VOC2012
-    data_list: ../../../../data/splits/pascal/val.txt
+    data_root: E:\dataset\voc\VOCdevkit\VOC2007
+    data_list: E:\dataset\voc\VOCdevkit\VOC2007\val.txt
     crop:
       type: center
-      size: [513, 513] # crop image with HxW size
-  batch_size: 8
-  n_sup: 1464
+      size: [512,512] # crop image with HxW size
+  batch_size: 6
   noise_std: 0.1
-  workers: 2
+  workers: 8
   mean: [123.675, 116.28, 103.53]
   std: [58.395, 57.12, 57.375]
   ignore_label: 255
 
 trainer: # Required.
-  epochs: 80
+  epochs: 10
+  naic_path: 'E:\python\ZEV\U2PL\ckpt\pretrain\last_try_best\42_Deeplabv3.pth'
+  pretrain: ''
   start_epochs: 0
   eval_on: True
   optimizer:
     type: SGD
     kwargs:
-      lr: 0.001  # 2GPUs
+      lr: 0.0001  # 2GPUs
       momentum: 0.9
       weight_decay: 0.0001
   lr_scheduler:
@@ -40,8 +41,9 @@ trainer: # Required.
       power: 0.9
 
 saver:
-  snapshot_dir: checkpoints
-  pretrain: ''
+  exp_path: ckpt
+  log_path: log
+  task_name: deqing_1
 
 criterion:
   type: CELoss
@@ -49,7 +51,7 @@ criterion:
     use_weight: False
 
 net: # Required.
-  num_classes: 21
+  num_classes: 6
   sync_bn: True
   ema_decay: 0.99
   encoder:

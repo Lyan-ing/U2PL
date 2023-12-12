@@ -23,13 +23,13 @@ dataset: # Required.
   ignore_label: 255
 
 trainer: # Required.
-  epochs: 20
+  epochs: 50
   start_epochs: 0
   eval_on: True
   optimizer:
     type: SGD
     kwargs:
-      lr: 0.0004  # 2GPUs
+      lr: 0.0001  # 2GPUs
       momentum: 0.9
       weight_decay: 0.0001
   lr_scheduler:
@@ -41,7 +41,7 @@ saver:
   exp_path: ckpt
   log_path: log
   task_name: dq
-  task_idx: dq_3_1
+  task_idx: dq_r50_1
 
 criterion:
   type: CELoss
@@ -53,5 +53,5 @@ net: # Required.
   sync_bn: True
   ema_decay: 0.99
   base_model: naic
-  backbone: resnet101
-  pretrain: 'E:\python\ZEV\U2PL\ckpt\pretrain\last_try_best\Deeplabv3.pth'
+  backbone: resnet50
+  pretrain: ''
