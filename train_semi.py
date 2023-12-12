@@ -271,9 +271,10 @@ def main():
 
                     # 格式化日期和时间
                     datetime_begin = now.strftime("%Y-%m-%d")
-                    model_type = cfg["dataset"]["type"].higher()
-                    model_param_dict = {"modelName": f"DeepLabV3Plus-{model_type}-01",
-                                        "baseModel": "DeepLabV3Plus",
+                    model_type = cfg["net"]["base_model"].capitalize()
+                    task_type = cfg["dataset"]["type"].capitalize()
+                    model_param_dict = {"modelName": f"{model_type}-{task_type}-01",
+                                        "baseModel": f"{model_type}",
                                         "backbone": "resnet101",
                                         "modelType": "landcover-classfication",
                                         "modelVersion": "1.0.0",
