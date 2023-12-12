@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
 
-from . import augmentation_label_convert as psp_trsform
+from . import augmentation as psp_trsform
 from .base import BaseDataset
 
 
@@ -58,6 +58,8 @@ class voc_dset(BaseDataset):
 
 
 def build_transfrom(cfg):
+    # if cfg["saver"]["task_name"]=="guangxi":
+    #     from . import augmentation_label_convert as psp_trsform
     trs_form = []
     mean, std, ignore_label = cfg["mean"], cfg["std"], cfg["ignore_label"]
     trs_form.append(psp_trsform.ToTensor())
@@ -75,6 +77,7 @@ def build_transfrom(cfg):
         trs_form.append(psp_trsform.RandomGaussianBlur())
     if cfg.get("flip", False) and cfg.get("flip"):
         trs_form.append(psp_trsform.RandomHorizontalFlip())
+        trs_form.append(psp_trsform.RandomVerticalFlip())
     if cfg.get("crop", False):
         crop_size, crop_type = cfg["crop"]["size"], cfg["crop"]["type"]
         trs_form.append(
@@ -94,7 +97,8 @@ def build_vocloader(split, all_cfg, seed=0):
     n_sup = cfg.get("n_sup", 10582)
     # build transform
     trs_form = build_transfrom(cfg)
-    dset = voc_dset(cfg["data_root"], cfg["data_list"], trs_form=trs_form, seed=seed, n_sup=n_sup)
+    dset = voc_dset(cfg["data_root"], os.path.join(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"])),
+                    trs_form=trs_form, seed=seed, n_sup=n_sup)
 
     # build sampler
     sample = DistributedSampler(dset)
@@ -118,10 +122,13 @@ def build_costum_loader(split, all_cfg, seed=0):
 
     workers = cfg.get("workers", 2)
     batch_size = cfg.get("batch_size", 1)
+    if split == "val":
+        batch_size = int(batch_size * 1.5)
     # n_sup = cfg.get("n_sup", 10582)
     # build transform
     trs_form = build_transfrom(cfg)
-    dset = voc_dset(cfg["data_root"], cfg["data_list"], 'costum', trs_form=trs_form, seed=seed)
+    dset = voc_dset(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"]), 'costum', trs_form=trs_form,
+                    seed=seed)
 
     # build sampler
     sample = DistributedSampler(dset)
@@ -150,7 +157,8 @@ def build_voc_semi_loader(split, all_cfg, seed=0):
     # build transform
     trs_form = build_transfrom(cfg)
     trs_form_unsup = build_transfrom(cfg)
-    dset = voc_dset(cfg["data_root"], cfg["data_list"], trs_form=trs_form, seed=seed, n_sup=n_sup, split=split)
+    dset = voc_dset(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"]), trs_form=trs_form, seed=seed,
+                    n_sup=n_sup, split=split)
 
     if split == "val":
         # build sampler
@@ -167,7 +175,7 @@ def build_voc_semi_loader(split, all_cfg, seed=0):
 
     else:
         # build sampler for unlabeled set
-        data_list_unsup = cfg["data_list"].replace("labeled.txt", "unlabeled.txt")
+        data_list_unsup = os.path.join(cfg["data_root"], cfg["data_list"]).replace("labeled.txt", "unlabeled.txt")
         dset_unsup = voc_dset(
             cfg["data_root"], data_list_unsup, trs_form=trs_form_unsup, seed=seed, n_sup=n_sup, split=split,
             mode='unlabel'
@@ -212,13 +220,14 @@ def build_costum_semi_loader(split, all_cfg, seed=0):
 
     if split != 'val':
         # build sampler for unlabeled set
-        data_list_unsup = cfg["unlabel_data_list"]  # .replace("labeled.txt", "unlabeled.txt")
+        data_list_unsup = os.path.join(cfg["data_root"], cfg["unlabel_data_list"])  # .replace("labeled.txt", "unlabeled.txt")
         dset_unsup = voc_dset(
             cfg["data_root"], data_list_unsup, 'costum', trs_form_unsup, seed, split=split, mode='unlabel'
         )
     n_sup = len(dset_unsup.list_sample_new)  # 計算一下無標記圖像的數量，將標籤圖像重複採樣至於無標記圖像相同
 
-    dset = voc_dset(cfg["data_root"], cfg["data_list"], 'costum', trs_form, seed, n_sup, split)
+    dset = voc_dset(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"]), 'costum', trs_form, seed, n_sup,
+                    split)
 
     if split == "val":
         # build sampler

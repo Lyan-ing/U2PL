@@ -18,6 +18,8 @@ import torch.nn.functional as F
 import yaml
 from tensorboardX import SummaryWriter
 from loguru import logger as loger
+from tqdm import tqdm
+
 from u2pl.dataset.augmentation import generate_unsup_data
 from u2pl.dataset.builder import get_loader
 from u2pl.models.model_helper import ModelBuilder
@@ -59,9 +61,13 @@ def main():
 
     cfg["exp_path"] = cfg["saver"]["exp_path"]
     cfg["log_path"] = cfg["saver"]["log_path"]
-    cfg["task_id"] = osp.join(cfg["dataset"]["type"], cfg["saver"]["task_name"])
+    cfg["task_id"] = osp.join(cfg["dataset"]["type"], cfg["saver"]["task_name"], cfg["saver"]["task_idx"])
     cfg["save_path"] = osp.join(cfg["exp_path"], cfg["task_id"])
     cfg["log_save_path"] = osp.join(cfg["log_path"], cfg["task_id"])
+
+    wether_resume = os.path.exists(osp.join(cfg["save_path"], "ckpt.pth"))
+    if not wether_resume:
+        args.resume = False
     if args.pretrain_path != '':
         cfg["trainer"]["pretrain"] = args.pretrain_path
 
@@ -91,18 +97,19 @@ def main():
 
     # Create network
     loger.info("============== Build student model ================")
-    if cfg['trainer']['naic_path'] != '':
-        model_path = cfg['trainer']['naic_path']
+    if cfg['net']['base_model'] == "naic":
         from u2pl.naic.deeplabv3_plus import DeepLabv3_plus
         import torch.nn as nn
-        model = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend='resnet101', os=16,
-                               pretrained=False, norm_layer=nn.BatchNorm2d)
-        if not args.resume:
-            loger.info(f"Model from NAIC DeeplabV3Plus from {model_path}..........")
-            load_state(model_path, model, key="naic")
-        # model.load_state_dict(torch.load(model_path,  map_location='cpu'), strict=False)
+        model = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend=cfg["net"]["backbone"],
+                               os=16, pretrained=False, norm_layer=nn.BatchNorm2d)
         modules_back = [model.backend]
         modules_head = [model.aspp_pooling, model.cbr_low, model.cbr_last]
+
+    elif cfg['net']["base_model"] == "unet":
+        from u2pl.unet.unet import Unet
+        model = Unet(num_classes=cfg["net"]["num_classes"], pretrained=False, backbone=cfg["net"]["backbone"])
+        modules_back = [model.resnet]
+        modules_head = [model.up_concat1, model.up_concat2, model.up_concat3, model.up_concat4, model.final]
 
     else:
         # Create network.
@@ -125,7 +132,7 @@ def main():
     # Optimizer and lr decay scheduler
     cfg_trainer = cfg["trainer"]
     cfg_optim = cfg_trainer["optimizer"]
-    times = 10 if "pascal" in cfg["dataset"]["type"] else 1  # 这里要修改
+    times = 10 # if "pascal" in cfg["dataset"]["type"] else 1  # 这里要修改
 
     params_list = []
     for module in modules_back:
@@ -149,15 +156,15 @@ def main():
 
     # Teacher model
     loger.info("============== Build teacher model ================")
-    if cfg['trainer']['naic_path'] != '':
-        model_path = cfg['trainer']['naic_path']
-        model_teacher = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend='resnet101', os=16,
-                                       pretrained=False, norm_layer=nn.BatchNorm2d)
-        if not args.resume:
-            loger.info(f"Model from NAIC DeeplabV3Plus from {model_path}..........")
-            load_state(model_path, model_teacher, key="naic")
-        # model.load_state_dict(torch.load(model_path,  map_location='cpu'), strict=False)
+    if cfg['net']['base_model'] == "naic":
+        from u2pl.naic.deeplabv3_plus import DeepLabv3_plus
+        import torch.nn as nn
+        model_teacher = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend=cfg["net"]["backbone"],
+                               os=16, pretrained=False, norm_layer=nn.BatchNorm2d)
 
+    elif cfg['net']["base_model"] == "unet":
+        from u2pl.unet.unet import Unet
+        model_teacher = Unet(num_classes=cfg["net"]["num_classes"], pretrained=False, backbone=cfg["net"]["backbone"])
     else:
         # Create network.
         model_teacher = ModelBuilder(cfg["net"])
@@ -189,9 +196,16 @@ def main():
                 lastest_model, model_teacher, optimizer=optimizer, key="teacher_state"
             )
 
-    elif cfg["trainer"].get("pretrain", False):
-        load_state(cfg["trainer"]["pretrain"], model, key="model_state")
-        load_state(cfg["trainer"]["pretrain"], model_teacher, key="teacher_state")
+    elif cfg["net"].get("pretrain", False):
+        if cfg["net"]["base_model"] == "naic":
+            load_state(cfg["net"]["pretrain"], model, key="naic")
+            load_state(cfg["net"]["pretrain"], model_teacher, key="naic")
+        elif cfg["net"]["base_model"] == "unet":
+            load_state(cfg["net"]["pretrain"], model, key="naic", type="need_module")
+            load_state(cfg["net"]["pretrain"], model_teacher, key="naic", type="need_module")
+        else:
+            load_state(cfg["net"]["pretrain"], model, key="model_state")
+            load_state(cfg["net"]["pretrain"], model_teacher, key="teacher_state")
 
     optimizer_start = get_optimizer(params_list, cfg_optim)
     lr_scheduler = get_scheduler(
@@ -221,8 +235,30 @@ def main():
     with open(osp.join(cfg["save_path"], 'config.yaml'), 'w', encoding='utf-8') as yf:
         yaml.dump(cfg, yf)
 
+    CLASSES_need = {
+        0: "background",
+        1: "building",
+        2: "grass",
+        3: "tree",
+        4: "water",
+        5: "tea"
+    }
+    now = datetime.now()
+    # 格式化日期和时间
+    datetime_begin = now.strftime("%Y-%m-%d %H:%M:%S")
+    if not args.resume:
+        with open(osp.join(cfg["save_path"], 'log.json'), 'w', encoding='utf-8') as log:
+            json.dump(f"==================BEGIN the Training at {datetime_begin}=================", log)
+            log.write('\n')
+            log.flush()
+    else:
+        with open(osp.join(cfg["save_path"], 'log.json'), 'a', encoding='utf-8') as log:
+            json.dump(f"=================RESUME the Training at {datetime_begin}=================", log)
+            log.write('\n')
+            log.flush()
     # Start to train model
-    for epoch in range(last_epoch, cfg_trainer["epochs"]):
+    all_epoch = cfg_trainer["epochs"]
+    for epoch in range(last_epoch, all_epoch):
         # Training
         train(
             model,
@@ -245,11 +281,41 @@ def main():
             if rank == 0:
                 logger.info("start evaluation")
 
-            if epoch < cfg["trainer"].get("sup_only_epoch",
-                                          1):  # i_iter == cfg["trainer"].get("sup_only_iter", 1000): #epoch < cfg["trainer"].get("sup_only_epoch", 1):
-                prec, iou_cls = validate(model, val_loader, epoch, logger)
-            else:
-                prec, iou_cls = validate(model_teacher, val_loader, epoch, logger)
+            # if epoch < cfg["trainer"].get("sup_only_epoch",
+            #                               1):  # i_iter == cfg["trainer"].get("sup_only_iter", 1000): #epoch < cfg["trainer"].get("sup_only_epoch", 1):
+            #     prec, iou_cls = validate(model, val_loader, epoch, logger)
+            # else:
+            logger.info("---------------------evaluate the student model------------------------")
+            prec, iou_cls = validate(model, val_loader, epoch, logger)
+            if rank == 0:
+                cls_json = [f"{CLASSES_need[i]} iou {iou}" for i, iou in enumerate(iou_cls)]
+                with open(osp.join(cfg["save_path"], 'log.json'), 'a', encoding='utf-8') as log_s:
+                    dict_json = {"FLAG": "[Val]", "Model": "[Student]", "Epoch": f"[{epoch}/{all_epoch}]",
+                                 "mIoU": f"[{round(prec * 100, 2)}]", "cls_iou": cls_json}
+                    json.dump(dict_json, log_s)
+                    log_s.write('\n')
+                    log_s.flush()
+                tb_logger.add_scalar("AmIoU/student", prec, epoch)
+                for i, iou in enumerate(iou_cls):
+                    logger.info(" * class [{}] IoU {:.2f}".format(CLASSES_need[i], iou * 100))
+                    tb_logger.add_scalar(f"IoU_student/{CLASSES_need[i]}", iou, epoch)
+                logger.info(" * epoch {} the student model mIoU {:.2f}".format(epoch, prec * 100))
+
+            logger.info("---------------------evaluate the teacher model------------------------")
+            prec_t, iou_cls_t = validate(model_teacher, val_loader, epoch, logger)
+            if rank == 0:
+                cls_json = [f"{CLASSES_need[i]} iou {iou}" for i, iou in enumerate(iou_cls_t)]
+                with open(osp.join(cfg["save_path"], 'log.json'), 'a', encoding='utf-8') as log_t:
+                    dict_json = {"FLAG": "[Val]", "Model": "[Teacher]", "Epoch": f"[{epoch}/{all_epoch}]",
+                                 "mIoU": f"[{round(prec_t * 100, 2)}]", "cls_iou": cls_json}
+                    json.dump(dict_json, log_t)
+                    log_t.write('\n')
+                    log_t.flush()
+                tb_logger.add_scalar("AmIoU/teacher", prec_t, epoch)
+                for i, iou in enumerate(iou_cls_t):
+                    logger.info(" * class [{}] IoU {:.2f}".format(CLASSES_need[i], iou * 100))
+                    tb_logger.add_scalar(f"IoU_teacher/{CLASSES_need[i]}", iou, epoch)
+                logger.info(" * epoch {} the teacher model mIoU {:.2f}".format(epoch, prec_t * 100))
 
             if rank == 0:
                 state = {
@@ -259,30 +325,30 @@ def main():
                     "teacher_state": model_teacher.state_dict(),
                     "best_miou": best_prec,
                 }
-                if prec > best_prec:
-                    best_prec = prec
+                if prec_t > best_prec:
+                    best_prec = prec_t
                     torch.save(
                         state, osp.join(cfg["save_path"], "ckpt_best.pth")
                     )
                     # 只保留权重，不保留优化器等
-                    torch.save(model.state_dict(), osp.join(cfg["save_path"], "best_model.pth"))
+                    torch.save(model_teacher.module.state_dict(), osp.join(cfg["save_path"], "best_epoch_weights.pth"))
                     # write the model_param.json
                     now = datetime.now()
 
                     # 格式化日期和时间
-                    datetime_begin = now.strftime("%Y-%m-%d")
+                    datetime_end = now.strftime("%Y-%m-%d %H:%M:%S")
                     model_type = cfg["net"]["base_model"].capitalize()
                     task_type = cfg["dataset"]["type"].capitalize()
                     model_param_dict = {"modelName": f"{model_type}-{task_type}-01",
                                         "baseModel": f"{model_type}",
-                                        "backbone": "resnet101",
+                                        "backbone": cfg["net"]["backbone"],
                                         "modelType": "landcover-classfication",
                                         "modelVersion": "1.0.0",
                                         "modelDescription": "模型说明",
-                                        # "category": list(CLASSES_need.values()),
+                                        "category": list(CLASSES_need.values())[1:],
                                         "Accuray": round(best_prec * 100, 2),
                                         "author": "...",
-                                        "create-time": datetime_begin,
+                                        "create-time": datetime_end,
                                         # "end-time": datetime_end
                                         }
 
@@ -296,9 +362,6 @@ def main():
                         best_prec * 100
                     )
                 )
-                tb_logger.add_scalar("mIoU val", prec, epoch)
-                for i, iou in enumerate(iou_cls):
-                    tb_logger.add_scalar(f"IoU val{i}", iou, epoch)
 
 
 def train(
@@ -330,336 +393,349 @@ def train(
     ), f"labeled data {len(loader_l)} unlabeled data {len(loader_u)}, imbalance!"
 
     rank, world_size = dist.get_rank(), dist.get_world_size()
-
-    sup_losses = AverageMeter(10)
-    uns_losses = AverageMeter(10)
-    con_losses = AverageMeter(10)
-    data_times = AverageMeter(10)
-    batch_times = AverageMeter(10)
-    learning_rates = AverageMeter(10)
+    vis_step = 20
+    sup_losses = AverageMeter(vis_step)
+    uns_losses = AverageMeter(vis_step)
+    con_losses = AverageMeter(vis_step)
+    data_times = AverageMeter(vis_step)
+    batch_times = AverageMeter(vis_step)
+    learning_rates = AverageMeter(vis_step)
 
     batch_end = time.time()
-    for step in range(len(loader_l)):
-        batch_start = time.time()
-        data_times.update(batch_start - batch_end)
+    with open(osp.join(cfg["save_path"], 'log.json'), 'a', encoding='utf-8') as log:
+        all_epoch = cfg["trainer"]["epochs"]
+        len_iter = len(loader_l)
+        all_iter = cfg["trainer"]["epochs"] * len_iter
+        for step in range(len_iter):
+            batch_start = time.time()
+            data_times.update(batch_start - batch_end)
 
-        i_iter = epoch * len(loader_l) + step
-        lr = lr_scheduler.get_lr()
-        learning_rates.update(lr[0])
-        lr_scheduler.step()
+            i_iter = epoch * len_iter + step
+            lr = lr_scheduler.get_lr()
+            learning_rates.update(lr[0])
+            lr_scheduler.step()
 
-        image_l, label_l = next(loader_l_iter)
-        batch_size, h, w = label_l.size()
-        image_l, label_l = image_l.cuda(), label_l.cuda()
+            image_l, label_l = next(loader_l_iter)
+            batch_size, h, w = label_l.size()
+            image_l, label_l = image_l.cuda(), label_l.cuda()
 
-        image_u, _ = next(loader_u_iter)  # 无标签部分的label不使用
-        image_u = image_u.cuda()
+            image_u, _ = next(loader_u_iter)  # 无标签部分的label不使用
+            image_u = image_u.cuda()
 
-        if i_iter < cfg["trainer"].get("sup_only_iter", 1000):
-            contra_flag = "none"
-            # forward
-            outs = model(image_l)
-            pred, rep = outs["pred"], outs["rep"]
-            pred = F.interpolate(pred, (h, w), mode="bilinear", align_corners=True)
+            if i_iter < cfg["trainer"].get("sup_only_iter", 1000):
+                contra_flag = "none"
+                # forward
+                outs = model(image_l)
+                pred, rep = outs["pred"], outs["rep"]
+                pred = F.interpolate(pred, (h, w), mode="bilinear", align_corners=True)
 
-            # supervised loss
-            if "aux_loss" in cfg["net"].keys():
-                aux = outs["aux"]
-                aux = F.interpolate(aux, (h, w), mode="bilinear", align_corners=True)
-                sup_loss = sup_loss_fn([pred, aux], label_l)
+                # supervised loss
+                if "aux_loss" in cfg["net"].keys():
+                    aux = outs["aux"]
+                    aux = F.interpolate(aux, (h, w), mode="bilinear", align_corners=True)
+                    sup_loss = sup_loss_fn([pred, aux], label_l)
+                else:
+                    sup_loss = sup_loss_fn(pred, label_l)
+
+                model_teacher.train()
+                # _ = model_teacher(image_l)
+
+                unsup_loss = 0 * rep.sum()
+                contra_loss = 0 * rep.sum()
             else:
-                sup_loss = sup_loss_fn(pred, label_l)
+                if i_iter == cfg["trainer"].get("sup_only_iter", 1000):
+                    # copy student parameters to teacher
+                    with torch.no_grad():
+                        for t_params, s_params in zip(
+                                model_teacher.parameters(), model.parameters()
+                        ):
+                            t_params.data = s_params.data
 
-            model_teacher.train()
-            # _ = model_teacher(image_l)
+                # generate pseudo labels first
+                model_teacher.eval()
+                pred_u_teacher = model_teacher(image_u)["pred"]
+                pred_u_teacher = F.interpolate(
+                    pred_u_teacher, (h, w), mode="bilinear", align_corners=True
+                )
+                pred_u_teacher = F.softmax(pred_u_teacher, dim=1)
+                logits_u_aug, label_u_aug = torch.max(pred_u_teacher, dim=1)
 
-            unsup_loss = 0 * rep.sum()
-            contra_loss = 0 * rep.sum()
-        else:
-            if i_iter == cfg["trainer"].get("sup_only_iter", 1000):
-                # copy student parameters to teacher
+                # apply strong data augmentation: cutout, cutmix, or classmix
+                if np.random.uniform(0, 1) < 0.5 and cfg["trainer"]["unsupervised"].get(
+                        "apply_aug", False
+                ):
+                    image_u_aug, label_u_aug, logits_u_aug = generate_unsup_data(
+                        image_u,
+                        label_u_aug.clone(),
+                        logits_u_aug.clone(),
+                        mode=cfg["trainer"]["unsupervised"]["apply_aug"],
+                    )  # 生成增强的数据
+                else:
+                    image_u_aug = image_u
+
+                # forward
+                num_labeled = len(image_l)
+                image_all = torch.cat((image_l, image_u_aug))
+                outs = model(image_all)
+                pred_all, rep_all = outs["pred"], outs["rep"]
+                pred_l, pred_u = pred_all[:num_labeled], pred_all[num_labeled:]
+                pred_l_large = F.interpolate(
+                    pred_l, size=(h, w), mode="bilinear", align_corners=True
+                )
+                pred_u_large = F.interpolate(
+                    pred_u, size=(h, w), mode="bilinear", align_corners=True
+                )
+
+                # supervised loss
+                if "aux_loss" in cfg["net"].keys():
+                    aux = outs["aux"][:num_labeled]
+                    aux = F.interpolate(aux, (h, w), mode="bilinear", align_corners=True)
+                    sup_loss = sup_loss_fn([pred_l_large, aux], label_l.clone())
+                else:
+                    sup_loss = sup_loss_fn(pred_l_large, label_l.clone())
+
+                # teacher forward
+                model_teacher.train()
                 with torch.no_grad():
+                    out_t = model_teacher(image_all)
+                    pred_all_teacher, rep_all_teacher = out_t["pred"], out_t["rep"]
+                    prob_all_teacher = F.softmax(pred_all_teacher, dim=1)
+                    prob_l_teacher, prob_u_teacher = (
+                        prob_all_teacher[:num_labeled],
+                        prob_all_teacher[num_labeled:],
+                    )
+
+                    pred_u_teacher = pred_all_teacher[num_labeled:]
+                    pred_u_large_teacher = F.interpolate(
+                        pred_u_teacher, size=(h, w), mode="bilinear", align_corners=True
+                    )
+
+                # unsupervised loss
+                drop_percent = cfg["trainer"]["unsupervised"].get("drop_percent", 100)
+                percent_unreliable = (100 - drop_percent) * (1 - epoch / cfg["trainer"]["epochs"])
+                drop_percent = 100 - percent_unreliable
+                unsup_loss = (
+                        compute_unsupervised_loss(
+                            pred_u_large,
+                            label_u_aug.clone(),
+                            drop_percent,
+                            pred_u_large_teacher.detach(),
+                        )
+                        * cfg["trainer"]["unsupervised"].get("loss_weight", 1)
+                )
+
+                # contrastive loss using unreliable pseudo labels
+                contra_flag = "none"
+                if cfg["trainer"].get("contrastive", False):
+                    cfg_contra = cfg["trainer"]["contrastive"]
+                    contra_flag = "{}:{}".format(
+                        cfg_contra["low_rank"], cfg_contra["high_rank"]
+                    )
+                    alpha_t = cfg_contra["low_entropy_threshold"] * (
+                            1 - epoch / cfg["trainer"]["epochs"]
+                    )
+
+                    with torch.no_grad():
+                        prob = torch.softmax(pred_u_large_teacher, dim=1)
+                        entropy = -torch.sum(prob * torch.log(prob + 1e-10), dim=1)
+
+                        low_thresh = np.percentile(
+                            entropy[label_u_aug != 255].cpu().numpy().flatten(), alpha_t
+                        )
+                        low_entropy_mask = (
+                                entropy.le(low_thresh).float() * (label_u_aug != 255).bool()
+                        )
+
+                        high_thresh = np.percentile(
+                            entropy[label_u_aug != 255].cpu().numpy().flatten(),
+                            100 - alpha_t,
+                        )
+                        high_entropy_mask = (
+                                entropy.ge(high_thresh).float() * (label_u_aug != 255).bool()
+                        )
+
+                        low_mask_all = torch.cat(
+                            (
+                                (label_l.unsqueeze(1) != 255).float(),
+                                low_entropy_mask.unsqueeze(1),
+                            )
+                        )
+
+                        low_mask_all = F.interpolate(
+                            low_mask_all, size=pred_all.shape[2:], mode="nearest"
+                        )
+                        # down sample
+
+                        if cfg_contra.get("negative_high_entropy", True):
+                            contra_flag += " high"
+                            high_mask_all = torch.cat(
+                                (
+                                    (label_l.unsqueeze(1) != 255).float(),
+                                    high_entropy_mask.unsqueeze(1),
+                                )
+                            )
+                        else:
+                            contra_flag += " low"
+                            high_mask_all = torch.cat(
+                                (
+                                    (label_l.unsqueeze(1) != 255).float(),
+                                    torch.ones(logits_u_aug.shape)
+                                        .float()
+                                        .unsqueeze(1)
+                                        .cuda(),
+                                ),
+                            )
+                        high_mask_all = F.interpolate(
+                            high_mask_all, size=pred_all.shape[2:], mode="nearest"
+                        )  # down sample
+
+                        # down sample and concat
+                        label_l_small = F.interpolate(
+                            label_onehot(label_l, cfg["net"]["num_classes"]),
+                            size=pred_all.shape[2:],
+                            mode="nearest",
+                        )
+                        label_u_small = F.interpolate(
+                            label_onehot(label_u_aug, cfg["net"]["num_classes"]),
+                            size=pred_all.shape[2:],
+                            mode="nearest",
+                        )
+
+                    if cfg_contra.get("binary", False):
+                        contra_flag += " BCE"
+                        contra_loss = compute_binary_memobank_loss(
+                            rep_all,
+                            torch.cat((label_l_small, label_u_small)).long(),
+                            low_mask_all,
+                            high_mask_all,
+                            prob_all_teacher.detach(),
+                            cfg_contra,
+                            memobank,
+                            queue_ptrlis,
+                            queue_size,
+                            rep_all_teacher.detach(),
+                        )
+                    else:
+                        if not cfg_contra.get("anchor_ema", False):
+                            new_keys, contra_loss = compute_contra_memobank_loss(
+                                rep_all,
+                                label_l_small.long(),
+                                label_u_small.long(),
+                                prob_l_teacher.detach(),
+                                prob_u_teacher.detach(),
+                                low_mask_all,
+                                high_mask_all,
+                                cfg_contra,
+                                memobank,
+                                queue_ptrlis,
+                                queue_size,
+                                rep_all_teacher.detach(),
+                            )
+                        else:
+                            prototype, new_keys, contra_loss = compute_contra_memobank_loss(
+                                rep_all,
+                                label_l_small.long(),
+                                label_u_small.long(),
+                                prob_l_teacher.detach(),
+                                prob_u_teacher.detach(),
+                                low_mask_all,
+                                high_mask_all,
+                                cfg_contra,
+                                memobank,
+                                queue_ptrlis,
+                                queue_size,
+                                rep_all_teacher.detach(),
+                                prototype,
+                            )
+
+                    dist.all_reduce(contra_loss)
+                    contra_loss = (
+                            contra_loss
+                            / world_size
+                            * cfg["trainer"]["contrastive"].get("loss_weight", 1)
+                    )
+
+                else:
+                    contra_loss = 0 * rep_all.sum()
+
+            loss = sup_loss + unsup_loss + contra_loss
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # update teacher model with EMA
+            if i_iter >= cfg["trainer"].get("sup_only_iter", 1000):  # epoch >= cfg["trainer"].get("sup_only_epoch", 1):
+                with torch.no_grad():  # ema权重
+                    ema_decay = min(
+                        1
+                        - 1
+                        / (
+                                i_iter
+                                - cfg["trainer"].get("sup_only_iter", 1000)
+                                + 1
+                        ),
+                        ema_decay_origin,
+                    )
                     for t_params, s_params in zip(
                             model_teacher.parameters(), model.parameters()
                     ):
-                        t_params.data = s_params.data
-
-            # generate pseudo labels first
-            model_teacher.eval()
-            pred_u_teacher = model_teacher(image_u)["pred"]
-            pred_u_teacher = F.interpolate(
-                pred_u_teacher, (h, w), mode="bilinear", align_corners=True
-            )
-            pred_u_teacher = F.softmax(pred_u_teacher, dim=1)
-            logits_u_aug, label_u_aug = torch.max(pred_u_teacher, dim=1)
-
-            # apply strong data augmentation: cutout, cutmix, or classmix
-            if np.random.uniform(0, 1) < 0.5 and cfg["trainer"]["unsupervised"].get(
-                    "apply_aug", False
-            ):
-                image_u_aug, label_u_aug, logits_u_aug = generate_unsup_data(
-                    image_u,
-                    label_u_aug.clone(),
-                    logits_u_aug.clone(),
-                    mode=cfg["trainer"]["unsupervised"]["apply_aug"],
-                )  # 生成增强的数据
-            else:
-                image_u_aug = image_u
-
-            # forward
-            num_labeled = len(image_l)
-            image_all = torch.cat((image_l, image_u_aug))
-            outs = model(image_all)
-            pred_all, rep_all = outs["pred"], outs["rep"]
-            pred_l, pred_u = pred_all[:num_labeled], pred_all[num_labeled:]
-            pred_l_large = F.interpolate(
-                pred_l, size=(h, w), mode="bilinear", align_corners=True
-            )
-            pred_u_large = F.interpolate(
-                pred_u, size=(h, w), mode="bilinear", align_corners=True
-            )
-
-            # supervised loss
-            if "aux_loss" in cfg["net"].keys():
-                aux = outs["aux"][:num_labeled]
-                aux = F.interpolate(aux, (h, w), mode="bilinear", align_corners=True)
-                sup_loss = sup_loss_fn([pred_l_large, aux], label_l.clone())
-            else:
-                sup_loss = sup_loss_fn(pred_l_large, label_l.clone())
-
-            # teacher forward
-            model_teacher.train()
-            with torch.no_grad():
-                out_t = model_teacher(image_all)
-                pred_all_teacher, rep_all_teacher = out_t["pred"], out_t["rep"]
-                prob_all_teacher = F.softmax(pred_all_teacher, dim=1)
-                prob_l_teacher, prob_u_teacher = (
-                    prob_all_teacher[:num_labeled],
-                    prob_all_teacher[num_labeled:],
-                )
-
-                pred_u_teacher = pred_all_teacher[num_labeled:]
-                pred_u_large_teacher = F.interpolate(
-                    pred_u_teacher, size=(h, w), mode="bilinear", align_corners=True
-                )
-
-            # unsupervised loss
-            drop_percent = cfg["trainer"]["unsupervised"].get("drop_percent", 100)
-            percent_unreliable = (100 - drop_percent) * (1 - epoch / cfg["trainer"]["epochs"])
-            drop_percent = 100 - percent_unreliable
-            unsup_loss = (
-                    compute_unsupervised_loss(
-                        pred_u_large,
-                        label_u_aug.clone(),
-                        drop_percent,
-                        pred_u_large_teacher.detach(),
-                    )
-                    * cfg["trainer"]["unsupervised"].get("loss_weight", 1)
-            )
-
-            # contrastive loss using unreliable pseudo labels
-            contra_flag = "none"
-            if cfg["trainer"].get("contrastive", False):
-                cfg_contra = cfg["trainer"]["contrastive"]
-                contra_flag = "{}:{}".format(
-                    cfg_contra["low_rank"], cfg_contra["high_rank"]
-                )
-                alpha_t = cfg_contra["low_entropy_threshold"] * (
-                        1 - epoch / cfg["trainer"]["epochs"]
-                )
-
-                with torch.no_grad():
-                    prob = torch.softmax(pred_u_large_teacher, dim=1)
-                    entropy = -torch.sum(prob * torch.log(prob + 1e-10), dim=1)
-
-                    low_thresh = np.percentile(
-                        entropy[label_u_aug != 255].cpu().numpy().flatten(), alpha_t
-                    )
-                    low_entropy_mask = (
-                            entropy.le(low_thresh).float() * (label_u_aug != 255).bool()
-                    )
-
-                    high_thresh = np.percentile(
-                        entropy[label_u_aug != 255].cpu().numpy().flatten(),
-                        100 - alpha_t,
-                    )
-                    high_entropy_mask = (
-                            entropy.ge(high_thresh).float() * (label_u_aug != 255).bool()
-                    )
-
-                    low_mask_all = torch.cat(
-                        (
-                            (label_l.unsqueeze(1) != 255).float(),
-                            low_entropy_mask.unsqueeze(1),
-                        )
-                    )
-
-                    low_mask_all = F.interpolate(
-                        low_mask_all, size=pred_all.shape[2:], mode="nearest"
-                    )
-                    # down sample
-
-                    if cfg_contra.get("negative_high_entropy", True):
-                        contra_flag += " high"
-                        high_mask_all = torch.cat(
-                            (
-                                (label_l.unsqueeze(1) != 255).float(),
-                                high_entropy_mask.unsqueeze(1),
-                            )
-                        )
-                    else:
-                        contra_flag += " low"
-                        high_mask_all = torch.cat(
-                            (
-                                (label_l.unsqueeze(1) != 255).float(),
-                                torch.ones(logits_u_aug.shape)
-                                    .float()
-                                    .unsqueeze(1)
-                                    .cuda(),
-                            ),
-                        )
-                    high_mask_all = F.interpolate(
-                        high_mask_all, size=pred_all.shape[2:], mode="nearest"
-                    )  # down sample
-
-                    # down sample and concat
-                    label_l_small = F.interpolate(
-                        label_onehot(label_l, cfg["net"]["num_classes"]),
-                        size=pred_all.shape[2:],
-                        mode="nearest",
-                    )
-                    label_u_small = F.interpolate(
-                        label_onehot(label_u_aug, cfg["net"]["num_classes"]),
-                        size=pred_all.shape[2:],
-                        mode="nearest",
-                    )
-
-                if cfg_contra.get("binary", False):
-                    contra_flag += " BCE"
-                    contra_loss = compute_binary_memobank_loss(
-                        rep_all,
-                        torch.cat((label_l_small, label_u_small)).long(),
-                        low_mask_all,
-                        high_mask_all,
-                        prob_all_teacher.detach(),
-                        cfg_contra,
-                        memobank,
-                        queue_ptrlis,
-                        queue_size,
-                        rep_all_teacher.detach(),
-                    )
-                else:
-                    if not cfg_contra.get("anchor_ema", False):
-                        new_keys, contra_loss = compute_contra_memobank_loss(
-                            rep_all,
-                            label_l_small.long(),
-                            label_u_small.long(),
-                            prob_l_teacher.detach(),
-                            prob_u_teacher.detach(),
-                            low_mask_all,
-                            high_mask_all,
-                            cfg_contra,
-                            memobank,
-                            queue_ptrlis,
-                            queue_size,
-                            rep_all_teacher.detach(),
-                        )
-                    else:
-                        prototype, new_keys, contra_loss = compute_contra_memobank_loss(
-                            rep_all,
-                            label_l_small.long(),
-                            label_u_small.long(),
-                            prob_l_teacher.detach(),
-                            prob_u_teacher.detach(),
-                            low_mask_all,
-                            high_mask_all,
-                            cfg_contra,
-                            memobank,
-                            queue_ptrlis,
-                            queue_size,
-                            rep_all_teacher.detach(),
-                            prototype,
+                        t_params.data = (
+                                ema_decay * t_params.data + (1 - ema_decay) * s_params.data
                         )
 
-                dist.all_reduce(contra_loss)
-                contra_loss = (
-                        contra_loss
-                        / world_size
-                        * cfg["trainer"]["contrastive"].get("loss_weight", 1)
-                )
+            # gather all loss from different gpus
+            reduced_sup_loss = sup_loss.clone().detach()
+            dist.all_reduce(reduced_sup_loss)
+            sup_losses.update(reduced_sup_loss.item())
 
-            else:
-                contra_loss = 0 * rep_all.sum()
+            reduced_uns_loss = unsup_loss.clone().detach()
+            dist.all_reduce(reduced_uns_loss)
+            uns_losses.update(reduced_uns_loss.item())
 
-        loss = sup_loss + unsup_loss + contra_loss
+            reduced_con_loss = contra_loss.clone().detach()
+            dist.all_reduce(reduced_con_loss)
+            con_losses.update(reduced_con_loss.item())
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            batch_end = time.time()
+            batch_times.update(batch_end - batch_start)
 
-        # update teacher model with EMA
-        if i_iter >= cfg["trainer"].get("sup_only_iter", 1000):  # epoch >= cfg["trainer"].get("sup_only_epoch", 1):
-            with torch.no_grad():  # ema权重
-                ema_decay = min(
-                    1
-                    - 1
-                    / (
-                            i_iter
-                            - cfg["trainer"].get("sup_only_iter", 1000)
-                            + 1
-                    ),
-                    ema_decay_origin,
-                )
-                for t_params, s_params in zip(
-                        model_teacher.parameters(), model.parameters()
-                ):
-                    t_params.data = (
-                            ema_decay * t_params.data + (1 - ema_decay) * s_params.data
+            if i_iter % vis_step == 0 and rank == 0:
+                logger.info(
+                    "Epoch [{}/{}] [{}] \t"
+                    "Iter [{}/{}]\t"
+                    "Data {data_time.val:.2f} ({data_time.avg:.2f})\t"
+                    "Time {batch_time.val:.2f} ({batch_time.avg:.2f})\t"
+                    "Sup {sup_loss.val:.3f} ({sup_loss.avg:.3f})\t"
+                    "Uns {uns_loss.val:.3f} ({uns_loss.avg:.3f})\t"
+                    "Con {con_loss.val:.3f} ({con_loss.avg:.3f})\t"
+                    "LR {lr.val:.5f}".format(
+                        epoch,
+                        all_epoch,
+                        contra_flag,
+                        step,
+                        len_iter,
+                        data_time=data_times,
+                        batch_time=batch_times,
+                        sup_loss=sup_losses,
+                        uns_loss=uns_losses,
+                        con_loss=con_losses,
+                        lr=learning_rates,
                     )
-
-        # gather all loss from different gpus
-        reduced_sup_loss = sup_loss.clone().detach()
-        dist.all_reduce(reduced_sup_loss)
-        sup_losses.update(reduced_sup_loss.item())
-
-        reduced_uns_loss = unsup_loss.clone().detach()
-        dist.all_reduce(reduced_uns_loss)
-        uns_losses.update(reduced_uns_loss.item())
-
-        reduced_con_loss = contra_loss.clone().detach()
-        dist.all_reduce(reduced_con_loss)
-        con_losses.update(reduced_con_loss.item())
-
-        batch_end = time.time()
-        batch_times.update(batch_end - batch_start)
-
-        if i_iter % 10 == 0 and rank == 0:
-            logger.info(
-                "[{}] [{}] "
-                "Iter [{}/{}]\t"
-                "Data {data_time.val:.2f} ({data_time.avg:.2f})\t"
-                "Time {batch_time.val:.2f} ({batch_time.avg:.2f})\t"
-                "Sup {sup_loss.val:.3f} ({sup_loss.avg:.3f})\t"
-                "Uns {uns_loss.val:.3f} ({uns_loss.avg:.3f})\t"
-                "Con {con_loss.val:.3f} ({con_loss.avg:.3f})\t"
-                "LR {lr.val:.5f}".format(
-                    epoch,
-                    contra_flag,
-                    i_iter,
-                    cfg["trainer"]["epochs"] * len(loader_l),
-                    data_time=data_times,
-                    batch_time=batch_times,
-                    sup_loss=sup_losses,
-                    uns_loss=uns_losses,
-                    con_loss=con_losses,
-                    lr=learning_rates,
                 )
-            )
-
-            tb_logger.add_scalar("lr", learning_rates.val, i_iter)
-            tb_logger.add_scalar("Sup Loss", sup_losses.val, i_iter)
-            tb_logger.add_scalar("Uns Loss", uns_losses.val, i_iter)
-            tb_logger.add_scalar("Con Loss", con_losses.val, i_iter)
+                dict_json = {"FLAG": "[Train]", "contra_flag": contra_flag, "Epoch": f"[{epoch}/{all_epoch}]", "Iter": f"[{i_iter}/{all_iter}]",
+                             "Sup Loss": f"{sup_losses.val:.4f} ({sup_losses.avg:.4f}) ",
+                             "Uns Loss": f"{uns_losses.val:.4f} ({uns_losses.avg:.4f}) ",
+                             "Con Loss": f"{con_losses.val:.4f} ({con_losses.avg:.4f}) ",
+                             "LR": f"{learning_rates.val:.5f} ({learning_rates.avg:.5f})",
+                             "Time": f"{batch_times.val:.2f} ({batch_times.avg:.2f})"}
+                json.dump(dict_json, log)
+                log.write('\n')
+                log.flush()
+                tb_logger.add_scalar("lr", learning_rates.val, i_iter)
+                tb_logger.add_scalar("Sup Loss", sup_losses.val, i_iter)
+                tb_logger.add_scalar("Uns Loss", uns_losses.val, i_iter)
+                tb_logger.add_scalar("Con Loss", con_losses.val, i_iter)
 
 
 def validate(
@@ -680,7 +756,7 @@ def validate(
     intersection_meter = AverageMeter()
     union_meter = AverageMeter()
 
-    for step, batch in enumerate(data_loader):
+    for batch in tqdm(data_loader):
         images, labels = batch
         images = images.cuda()
         labels = labels.long().cuda()
@@ -716,12 +792,12 @@ def validate(
     iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
     mIoU = np.mean(iou_class)
 
-    if rank == 0:
-        for i, iou in enumerate(iou_class):
-            logger.info(" * class [{}] IoU {:.2f}".format(i, iou * 100))
-        logger.info(" * epoch {} mIoU {:.2f}".format(epoch, mIoU * 100))
+    # if rank == 0:
+    #     for i, iou in enumerate(iou_class):
+    #         logger.info(" * class [{}] IoU {:.2f}".format(i, iou * 100))
+    #     logger.info(" * epoch {} mIoU {:.2f}".format(epoch, mIoU * 100))
 
-    return mIoU
+    return mIoU, iou_class
 
 
 if __name__ == "__main__":

@@ -1,32 +1,30 @@
 dataset: # Required.
   type: costum_semi
+  data_root: D:\DATA\DQ3
   train:
-    data_root: E:\python\ZEV\U2PL\data\st\train
-    data_list: E:\python\ZEV\U2PL\data\st\train\train.txt
-    unlabel_data_list: E:\python\ZEV\U2PL\data\st\train\unlabel.txt
+    data_list: train.txt
+    unlabel_data_list: unlabel.txt
     flip: True
     GaussianBlur: False
     #rand_resize: [1.0, 1.0]
     #rand_rotation: [-10.0, 10.0]
     crop:
       type: rand
-      size: [257, 257] # crop image with HxW size
+      size: [512, 512] # crop image with HxW size
   val:
-    data_root: E:\python\ZEV\U2PL\data\st\train
-    data_list: E:\python\ZEV\U2PL\data\st\train\val.txt
+    data_list: val.txt
     crop:
       type: center
-      size: [257, 257] # crop image with HxW size
+      size: [512, 512] # crop image with HxW size
   batch_size: 8
   noise_std: 0.1
-  workers: 4
+  workers: 8
   mean: [123.675, 116.28, 103.53]
   std: [58.395, 57.12, 57.375]
   ignore_label: 255  #
 
 trainer: # Required.
-  epochs: 5
-  naic_path: 'E:\python\ZEV\U2PL\ckpt\pretrain\last_try_best\42_Deeplabv3.pth'
+  epochs: 50
   sup_only_iter: 3000
   eval_on: True
   optimizer:
@@ -58,7 +56,8 @@ trainer: # Required.
 saver:
   exp_path: ckpt
   log_path: log
-  task_name: guangxi_3
+  task_name: dq
+  task_idx: dq_r50_1
 
 criterion:
   type: CELoss
@@ -66,20 +65,9 @@ criterion:
     use_weight: False
 
 net: # Required.
-  num_classes: 8
+  num_classes: 6
   base_model: unet
+  backbone: resnet50
   pretrain: ''
   sync_bn: True
   ema_decay: 0.999
-  encoder:
-    type: u2pl.models.resnet.resnet101
-    kwargs:
-      multi_grid: True
-      zero_init_residual: True
-      fpn: True
-      replace_stride_with_dilation: [False, True, True]  #layer0...1 is fixed, layer2...4
-  decoder:
-    type: u2pl.models.decoder.dec_deeplabv3_plus
-    kwargs:
-      inner_planes: 256
-      dilations: [12, 24, 36]

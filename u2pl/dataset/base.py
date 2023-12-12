@@ -40,7 +40,7 @@ class BaseDataset(Dataset):
             elif self.mode == 'unlabel':
                 self.list_sample = [
                     [
-                        "image_A/{}".format(line.strip()),
+                        "unlabel/{}".format(line.strip()),
                     ]
                     for line in open(d_list, "r")
                 ]

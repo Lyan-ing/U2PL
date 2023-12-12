@@ -245,30 +245,30 @@ def main():
                 # 只保留权重，不保留优化器等
                 torch.save(model.module.state_dict(), osp.join(cfg["save_path"], "best_epoch_weights.pth"))
 
+                # write the model_param.json
+                now = datetime.now()
+
+                # 格式化日期和时间
+                datetime_end = now.strftime("%Y-%m-%d %H:%M:%S")
+                model_type = cfg["net"]["base_model"].capitalize()
+                task_type = cfg["dataset"]["type"].capitalize()
+                model_param_dict = {"modelName": f"{model_type}-{task_type}-01",
+                                    "baseModel": f"{model_type}",
+                                    "backbone": cfg["net"]["backbone"],
+                                    "modelType": "landcover-classfication",
+                                    "modelVersion": "1.0.0",
+                                    "modelDescription": "模型说明",
+                                    "category": list(CLASSES_need.values())[1:],
+                                    "Accuray": round(best_prec * 100, 2),
+                                    "author": "...",
+                                    "create-time": datetime_end,
+                                    # "end-time": datetime_end
+                                    }
+
+                with open(os.path.join(cfg["save_path"], 'model_param.json'), 'w', encoding='utf-8') as ff:
+                    json.dump(model_param_dict, ff, indent=4, ensure_ascii=False)
+
             torch.save(state, osp.join(cfg["save_path"], "ckpt.pth"))
-            # write the model_param.json
-            now = datetime.now()
-
-            # 格式化日期和时间
-            datetime_end = now.strftime("%Y-%m-%d %H:%M:%S")
-            model_type = cfg["net"]["base_model"].capitalize()
-            task_type = cfg["dataset"]["type"].capitalize()
-            model_param_dict = {"modelName": f"{model_type}-{task_type}-01",
-                                "baseModel": f"{model_type}",
-                                "backbone": cfg["net"]["backbone"],
-                                "modelType": "landcover-classfication",
-                                "modelVersion": "1.0.0",
-                                "modelDescription": "模型说明",
-                                "category": list(CLASSES_need.values())[1:],
-                                "Accuray": round(best_prec * 100, 2),
-                                "author": "...",
-                                "create-time": datetime_end,
-                                # "end-time": datetime_end
-                                }
-
-            with open(os.path.join(cfg["save_path"], 'model_param.json'), 'w', encoding='utf-8') as ff:
-                json.dump(model_param_dict, ff, indent=4, ensure_ascii=False)
-
             logger.info(
                 "\033[31m * Currently, the best val result is: {:.2f}\033[0m".format(
                     best_prec * 100
@@ -440,8 +440,9 @@ def validate(
 
         iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
         mIoU = np.mean(iou_class)
-        json.dump("FLAG: [Val]    Epoch [{}/{}]    mIoU [{}]".format(
-            epoch, cfg["trainer"]["epochs"], round(mIoU * 100, 2), ), log)
+        total_epoch = cfg["trainer"]["epochs"]
+        dict_json = {"FLAG": "[Val]", "Epoch": f"[{epoch}/{total_epoch}]", "mIoU": f"[{round(mIoU * 100, 2)}]"}
+        json.dump(dict_json, log)
         log.write('\n')
         log.flush()
 
