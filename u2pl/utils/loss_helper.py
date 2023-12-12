@@ -266,29 +266,13 @@ class Criterion(nn.Module):
         else:
             weights = torch.FloatTensor(
                 [
-                    0.0,
-                    0.0,
-                    0.0,
                     1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    0.0,
-                    0.0,
-                    1.0,
-                    0.0,
-                    0.0,
-                    1.0,
-                    0.0,
-                    1.0,
-                    0.0,
-                    1.0,
-                    1.0,
-                    1.0,
+                    6.0,
+                    5.0
                 ]
             ).cuda()
-            self._criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
-            self._criterion1 = nn.CrossEntropyLoss(
+            # self._criterion1 = nn.CrossEntropyLoss(ignore_index=ignore_index)
+            self._criterion = nn.CrossEntropyLoss(
                 ignore_index=ignore_index, weight=weights
             )
 

@@ -597,6 +597,16 @@ def load_state(path, model, optimizer=None, key="state_dict", type="module"):
             for k,v in checkpoint.items():
                 if k[:6]=="module":
                     checkpoints[k[7:]]=v
+                else:
+                    checkpoints[k] = v
+            checkpoint = checkpoints
+        elif type =="need_module":
+            checkpoints = {}
+            for k, v in checkpoint.items():
+                if k[:6] == "module":
+                    checkpoints[k] = v
+                else:
+                    checkpoints["module."+k] = v
             checkpoint = checkpoints
 
         # fix size mismatch error

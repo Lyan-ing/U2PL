@@ -203,7 +203,7 @@ def resnet50(pretrained=False, output_stride=None, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 4, 6, 3], output_stride, **kwargs)
     if pretrained:
-        model._load_pretrained_model(torch.load("./resnet50-19c8e357.pth"))
+        model._load_pretrained_model(torch.load("E:/python/ckpt/resnet50-19c8e357.pth"))
     return model
 
 
