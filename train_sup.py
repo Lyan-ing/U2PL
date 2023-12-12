@@ -93,7 +93,7 @@ def main():
         # model_path = cfg['trainer']['naic_path']
         from u2pl.naic.deeplabv3_plus import DeepLabv3_plus
         import torch.nn as nn
-        model = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend='resnet101', os=16,
+        model = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend=cfg["net"]["backbone"], os=16,
                                pretrained=False, norm_layer=nn.BatchNorm2d)
         # if not args.resume:
         #     loger.info(f"Model from NAIC DeeplabV3Plus from {model_path}..........")
@@ -103,7 +103,7 @@ def main():
         modules_head = [model.aspp_pooling, model.cbr_low, model.cbr_last]
     elif cfg['net']["base_model"] == "unet":
         from u2pl.unet.unet import Unet
-        model = Unet(num_classes=cfg["net"]["num_classes"], pretrained=False, backbone="resnet50")
+        model = Unet(num_classes=cfg["net"]["num_classes"], pretrained=False, backbone=cfg["net"]["backbone"])
         modules_back = [model.resnet]
         modules_head = [model.up_concat1, model.up_concat2, model.up_concat3, model.up_concat4, model.final]
         # model.freeze_backbone()
@@ -136,7 +136,7 @@ def main():
     # Optimizer and lr decay scheduler
     cfg_trainer = cfg["trainer"]
     cfg_optim = cfg_trainer["optimizer"]
-    times = 10  # if "pascal" in cfg["dataset"]["type"] else 1  # 这里要修改
+    times = 10  # if "pascal" in cfg["dataset"]["type"] else 1  #  这里要修改
 
     params_list = []
     for module in modules_back:
@@ -168,7 +168,7 @@ def main():
         if cfg["net"]["base_model"] == "naic":
             load_state(cfg["net"]["pretrain"], model, key="naic")
         elif cfg["net"]["base_model"] == "unet":
-            load_state(cfg["net"]["pretrain"], model, key="naic")
+            load_state(cfg["net"]["pretrain"], model, key="naic", type="need_module")
         else:
             load_state(cfg["net"]["pretrain"], model, key="model_state")
 
@@ -243,7 +243,7 @@ def main():
                     state, osp.join(cfg["save_path"], "ckpt_best.pth")
                 )
                 # 只保留权重，不保留优化器等
-                torch.save(model.state_dict(), osp.join(cfg["save_path"], "best_model.pth"))
+                torch.save(model.module.state_dict(), osp.join(cfg["save_path"], "best_epoch_weights.pth"))
 
             torch.save(state, osp.join(cfg["save_path"], "ckpt.pth"))
             # write the model_param.json
@@ -255,11 +255,11 @@ def main():
             task_type = cfg["dataset"]["type"].capitalize()
             model_param_dict = {"modelName": f"{model_type}-{task_type}-01",
                                 "baseModel": f"{model_type}",
-                                "backbone": "resnet101",
+                                "backbone": cfg["net"]["backbone"],
                                 "modelType": "landcover-classfication",
                                 "modelVersion": "1.0.0",
                                 "modelDescription": "模型说明",
-                                "category": list(CLASSES_need.values()),
+                                "category": list(CLASSES_need.values())[1:],
                                 "Accuray": round(best_prec * 100, 2),
                                 "author": "...",
                                 "create-time": datetime_end,
@@ -308,12 +308,13 @@ def train(  # 蓝，青，绿
     with open(osp.join(cfg["save_path"], 'log.json'), 'a', encoding='utf-8') as log:
         # json.dump(cfg, log)
         all_epoch = cfg["trainer"]["epochs"]
-        all_iter = cfg["trainer"]["epochs"]*len(data_loader)
-        for step in range(len(data_loader)):
+        len_iter = len(data_loader)
+        all_iter = cfg["trainer"]["epochs"]*len_iter
+        for step in range(len_iter):
             batch_start = time.time()
             data_times.update(batch_start - batch_end)
 
-            i_iter = epoch * len(data_loader) + step
+            i_iter = epoch * len_iter + step
             lr = lr_scheduler.get_lr()
             learning_rates.update(lr[0])
             lr_scheduler.step()
@@ -347,13 +348,16 @@ def train(  # 蓝，青，绿
             if i_iter % 20 == 0 and rank == 0:
 
                 logger.info(
+                    "Epoch [{}/{}]\t"
                     "Iter [{}/{}]\t"
                     "Data {data_time.val:.2f} ({data_time.avg:.2f})\t"
                     "Time {batch_time.val:.2f} ({batch_time.avg:.2f})\t"
                     "Loss {loss.val:.4f} ({loss.avg:.4f})\t"
                     "LR {lr.val:.5f} ({lr.avg:.5f})\t".format(
-                        i_iter,
-                        all_iter,
+                        epoch,
+                        all_epoch,
+                        step,
+                        len_iter,
                         data_time=data_times,
                         batch_time=batch_times,
                         loss=losses,
