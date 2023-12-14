@@ -8,7 +8,8 @@ from .sync_batchnorm.batchnorm import SynchronizedBatchNorm2d as SyncBN2d
 
 
 class DeepLabv3_plus(nn.Module):
-    def __init__(self, in_channels, num_classes, backend='resnet18', os=16, pretrained='imagenet', norm_layer=SyncBN2d):
+    def __init__(self, in_channels, num_classes, backend='resnet18', os=16, pretrained='imagenet',
+                 norm_layer=SyncBN2d, rep_head=False):
         '''
         :param in_channels:
         :param num_classes:
@@ -18,6 +19,7 @@ class DeepLabv3_plus(nn.Module):
         super(DeepLabv3_plus, self).__init__()
         self.in_channes = in_channels
         self.num_classes = num_classes
+        self.rep_head = rep_head
         if hasattr(backend, 'low_features') and hasattr(backend, 'high_features') \
                 and hasattr(backend, 'lastconv_channel'):
             self.backend = backend
@@ -58,8 +60,18 @@ class DeepLabv3_plus(nn.Module):
                                       norm_layer(self.aspp_out_channel),
                                       nn.ReLU(inplace=True),
                                       nn.Conv2d(self.aspp_out_channel, self.num_classes, kernel_size=1))
+        if self.rep_head:
+            self.representation = nn.Sequential(nn.Conv2d(self.aspp_out_channel + 48,
+                                                          self.aspp_out_channel, kernel_size=3, padding=1, bias=False),
+                                                norm_layer(self.aspp_out_channel),
+                                                nn.ReLU(inplace=True),
+                                                nn.Conv2d(self.aspp_out_channel, self.aspp_out_channel,
+                                                          kernel_size=3, padding=1, bias=False),
+                                                norm_layer(self.aspp_out_channel),
+                                                nn.ReLU(inplace=True),
+                                                nn.Conv2d(self.aspp_out_channel, self.aspp_out_channel, kernel_size=1))
 
-    def forward(self, x):
+    def forward(self, x, upper=False):
         h, w = x.size()[2:]
         low_features, x = self.backend(x)
         x = self.aspp_pooling(x)
@@ -67,9 +79,14 @@ class DeepLabv3_plus(nn.Module):
         low_features = self.cbr_low(low_features)
 
         x = torch.cat([x, low_features], dim=1)
-        x = self.cbr_last(x)
-        x = F.interpolate(x, size=(h, w), mode='bilinear', align_corners=True)
-        return {"pred": x}
+        out = self.cbr_last(x)
+        res = {}
+        if self.rep_head:
+            res["rep"] = self.representation(x)
+        if upper:
+            out = F.interpolate(out, size=(h, w), mode='bilinear', align_corners=True)
+        res["pred"] = out
+        return res
     #
     # def get_1x_lr_params(self):
     #     modules = [self.backend]
@@ -184,7 +201,7 @@ class ShuffleNetBackend(nn.Module):
 
 
 if __name__ == '__main__':
-    from torchsummary import summary
+    # from torchsummary import summary
 
     deeplabv3_ = DeepLabv3_plus(in_channels=3, num_classes=8, backend='resnest101', os=16, pretrained=False)
     img = torch.rand(8, 3, 256, 256)
