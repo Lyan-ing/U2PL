@@ -3,6 +3,8 @@ import math
 import os
 import os.path
 import random
+
+import loguru
 from PIL import Image
 import numpy as np
 import torch
@@ -22,15 +24,11 @@ class voc_dset(BaseDataset):
         super(voc_dset, self).__init__(data_list, data_type)
         self.data_root = data_root
         # self.mode = mode
-        if mode == 'unlabel':
-            n_sup = len(self.list_sample)
         self.transform = trs_form
         random.seed(seed)
-        if mode == 'unlabel':
-            self.list_sample_new = self.list_sample
-        elif len(self.list_sample) >= n_sup and split == "train":
+        if split == "train" and len(self.list_sample) > n_sup:
             self.list_sample_new = random.sample(self.list_sample, n_sup)
-        elif len(self.list_sample) < n_sup and split == "train":
+        elif split == "train" and len(self.list_sample) < n_sup:
             num_repeat = math.ceil(n_sup / len(self.list_sample))
             self.list_sample = self.list_sample * num_repeat
 
@@ -218,15 +216,26 @@ def build_costum_semi_loader(split, all_cfg, seed=0):
     trs_form = build_transfrom(cfg)
     trs_form_unsup = build_transfrom(cfg)
 
+    data_list = os.path.join(cfg["data_root"], cfg["data_list"])
+    n_sup = 0
     if split != 'val':
         # build sampler for unlabeled set
-        data_list_unsup = os.path.join(cfg["data_root"], cfg["unlabel_data_list"])  # .replace("labeled.txt", "unlabeled.txt")
+        data_list_unsup = os.path.join(cfg["data_root"], cfg["unlabel_data_list"])
+        with open(data_list_unsup, 'r') as f:
+            lines = f.readlines()
+            line_count_unsup = len(lines)
+        with open(data_list, 'r') as f:
+            lines = f.readlines()
+            line_count = len(lines)
+        n_sup = line_count if line_count_unsup < line_count else line_count_unsup
+        loguru.logger.info(f"训练样本数量为 2 * {n_sup}")
+        # .replace("labeled.txt", "unlabeled.txt")
         dset_unsup = voc_dset(
-            cfg["data_root"], data_list_unsup, 'costum', trs_form_unsup, seed, split=split, mode='unlabel'
+            cfg["data_root"], data_list_unsup, 'costum', trs_form_unsup, seed, n_sup, split=split, mode="unlabel"
         )
-    n_sup = len(dset_unsup.list_sample_new)  # 計算一下無標記圖像的數量，將標籤圖像重複採樣至於無標記圖像相同
+        # n_sup = len(dset_unsup.list_sample_new)  # 計算一下無標記圖像的數量，將標籤圖像重複採樣至於無標記圖像相同
 
-    dset = voc_dset(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"]), 'costum', trs_form, seed, n_sup,
+    dset = voc_dset(cfg["data_root"], data_list, 'costum', trs_form, seed, n_sup,
                     split)
 
     if split == "val":

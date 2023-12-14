@@ -96,12 +96,12 @@ def main():
     model_path = None
 
     # Create network
-    loger.info("============== Build student model ================")
+    loger.info("--------------- Build student model ------------------")
     if cfg['net']['base_model'] == "naic":
         from u2pl.naic.deeplabv3_plus import DeepLabv3_plus
         import torch.nn as nn
         model = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend=cfg["net"]["backbone"],
-                               os=16, pretrained=False, norm_layer=nn.BatchNorm2d)
+                               os=16, pretrained=False, norm_layer=nn.BatchNorm2d, rep_head=cfg["net"]["rep_head"])
         modules_back = [model.backend]
         modules_head = [model.aspp_pooling, model.cbr_low, model.cbr_last]
 
@@ -155,12 +155,12 @@ def main():
     )
 
     # Teacher model
-    loger.info("============== Build teacher model ================")
+    loger.info("-------------- Build teacher model ----------------")
     if cfg['net']['base_model'] == "naic":
         from u2pl.naic.deeplabv3_plus import DeepLabv3_plus
         import torch.nn as nn
         model_teacher = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend=cfg["net"]["backbone"],
-                               os=16, pretrained=False, norm_layer=nn.BatchNorm2d)
+                               os=16, pretrained=False, norm_layer=nn.BatchNorm2d, rep_head=cfg["net"]["rep_head"])
 
     elif cfg['net']["base_model"] == "unet":
         from u2pl.unet.unet import Unet
@@ -198,8 +198,8 @@ def main():
 
     elif cfg["net"].get("pretrain", False):
         if cfg["net"]["base_model"] == "naic":
-            load_state(cfg["net"]["pretrain"], model, key="naic")
-            load_state(cfg["net"]["pretrain"], model_teacher, key="naic")
+            load_state(cfg["net"]["pretrain"], model, key="naic", type="need_module")
+            load_state(cfg["net"]["pretrain"], model_teacher, key="naic", type="need_module")
         elif cfg["net"]["base_model"] == "unet":
             load_state(cfg["net"]["pretrain"], model, key="naic", type="need_module")
             load_state(cfg["net"]["pretrain"], model_teacher, key="naic", type="need_module")
@@ -248,12 +248,12 @@ def main():
     datetime_begin = now.strftime("%Y-%m-%d %H:%M:%S")
     if not args.resume:
         with open(osp.join(cfg["save_path"], 'log.json'), 'w', encoding='utf-8') as log:
-            json.dump(f"==================BEGIN the Training at {datetime_begin}=================", log)
+            json.dump(f"------------------BEGIN the Training at {datetime_begin}------------------", log)
             log.write('\n')
             log.flush()
     else:
         with open(osp.join(cfg["save_path"], 'log.json'), 'a', encoding='utf-8') as log:
-            json.dump(f"=================RESUME the Training at {datetime_begin}=================", log)
+            json.dump(f"------------------RESUME the Training at {datetime_begin}------------------", log)
             log.write('\n')
             log.flush()
     # Start to train model
@@ -464,7 +464,7 @@ def train(
                 if np.random.uniform(0, 1) < 0.5 and cfg["trainer"]["unsupervised"].get(
                         "apply_aug", False
                 ):
-                    image_u_aug, label_u_aug, logits_u_aug = generate_unsup_data(
+                    image_u_aug, label_u_aug, logits_u_aug = generate_unsup_data(  # label, logits is what
                         image_u,
                         label_u_aug.clone(),
                         logits_u_aug.clone(),
@@ -473,11 +473,11 @@ def train(
                 else:
                     image_u_aug = image_u
 
-                # forward
+                # forward student training
                 num_labeled = len(image_l)
                 image_all = torch.cat((image_l, image_u_aug))
                 outs = model(image_all)
-                pred_all, rep_all = outs["pred"], outs["rep"]
+                pred_all, rep_all = outs["pred"], outs["rep"] #
                 pred_l, pred_u = pred_all[:num_labeled], pred_all[num_labeled:]
                 pred_l_large = F.interpolate(
                     pred_l, size=(h, w), mode="bilinear", align_corners=True
@@ -492,14 +492,14 @@ def train(
                     aux = F.interpolate(aux, (h, w), mode="bilinear", align_corners=True)
                     sup_loss = sup_loss_fn([pred_l_large, aux], label_l.clone())
                 else:
-                    sup_loss = sup_loss_fn(pred_l_large, label_l.clone())
+                    sup_loss = sup_loss_fn(pred_l_large, label_l.clone())  # supervised loss
 
                 # teacher forward
                 model_teacher.train()
                 with torch.no_grad():
                     out_t = model_teacher(image_all)
-                    pred_all_teacher, rep_all_teacher = out_t["pred"], out_t["rep"]
-                    prob_all_teacher = F.softmax(pred_all_teacher, dim=1)
+                    pred_all_teacher, rep_all_teacher = out_t["pred"], out_t["rep"] #
+                    prob_all_teacher = F.softmax(pred_all_teacher, dim=1)  # teacher pred label
                     prob_l_teacher, prob_u_teacher = (
                         prob_all_teacher[:num_labeled],
                         prob_all_teacher[num_labeled:],
@@ -514,10 +514,10 @@ def train(
                 drop_percent = cfg["trainer"]["unsupervised"].get("drop_percent", 100)
                 percent_unreliable = (100 - drop_percent) * (1 - epoch / cfg["trainer"]["epochs"])
                 drop_percent = 100 - percent_unreliable
-                unsup_loss = (
+                unsup_loss = (  # unsupervised loss accept the student pred and the top K teacher pred
                         compute_unsupervised_loss(
                             pred_u_large,
-                            label_u_aug.clone(),
+                            label_u_aug.clone(), # ?
                             drop_percent,
                             pred_u_large_teacher.detach(),
                         )
@@ -613,7 +613,7 @@ def train(
                             memobank,
                             queue_ptrlis,
                             queue_size,
-                            rep_all_teacher.detach(),
+                            rep_all_teacher.detach(), #
                         )
                     else:
                         if not cfg_contra.get("anchor_ema", False):

@@ -2,7 +2,7 @@ dataset: # Required.
   type: costum_semi
   data_root: D:\DATA\DQ3
   train:
-    data_list: train.txt
+    data_list: train1.txt
     unlabel_data_list: unlabel.txt
     flip: True
     GaussianBlur: False
@@ -12,11 +12,11 @@ dataset: # Required.
       type: rand
       size: [512, 512] # crop image with HxW size
   val:
-    data_list: val.txt
+    data_list: val1.txt
     crop:
       type: center
       size: [512, 512] # crop image with HxW size
-  batch_size: 4
+  batch_size: 2
   noise_std: 0.1
   workers: 8
   mean: [123.675, 116.28, 103.53]
@@ -25,12 +25,12 @@ dataset: # Required.
 
 trainer: # Required.
   epochs: 50
-  sup_only_iter: 3000
+  sup_only_iter: 1000
   eval_on: True
   optimizer:
     type: SGD
     kwargs:
-      lr: 0.001  # 4GPUs
+      lr: 0.0002  # 4GPUs
       momentum: 0.9
       weight_decay: 0.0001
   lr_scheduler:
@@ -43,8 +43,8 @@ trainer: # Required.
     apply_aug: cutmix
   contrastive:
     negative_high_entropy: True
-    low_rank: 3
-    high_rank: 20
+    low_rank: 2
+    high_rank: 5
     current_class_threshold: 0.3
     current_class_negative_threshold: 1
     unsupervised_entropy_ignore: 80
@@ -57,7 +57,7 @@ saver:
   exp_path: ckpt
   log_path: log
   task_name: dq
-  task_idx: dq_deep_r50_1
+  task_idx: dq_deep_r50_2
 
 criterion:
   type: CELoss
@@ -67,7 +67,7 @@ criterion:
 net: # Required.
   num_classes: 6
   base_model: deeplab
-  pretrain: ''
+  pretrain: 'E:\python\ZEV\U2PL\ckpt\costum_semi\dq\dq_deep_r50_2\ckpt_best.pth'
   sync_bn: True
   ema_decay: 0.999
   backbone: resnet50

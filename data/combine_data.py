@@ -2,16 +2,16 @@ import os
 import shutil
 
 # 源文件夹路径
-source_folder = r"D:\DQ\train1"
-
+source_folder = r"D:\DATA\DQ2"
+dir_list = os.listdir(source_folder)
 # 目标文件夹路径
-target_folder = r"D:\DQ"
+target_folder = r"D:\DATA\DQ2"
 ann_path = os.path.join(target_folder, "anno")
 jpg_path = os.path.join(target_folder, "jpg")
 os.makedirs(ann_path, exist_ok=True)
 os.makedirs(jpg_path, exist_ok=True)
 # 遍历源文件夹下的子文件夹
-for subfolder in os.listdir(source_folder):
+for subfolder in dir_list:
     subfolder_path = os.path.join(source_folder, subfolder)
     if not os.path.isdir(subfolder_path):
         continue
