@@ -17,12 +17,13 @@ def copy_first_100_lines(input_file, output_file):
 split_rate = 0.8
 unlabel_root = ''
 
-root = r'E:\python\ZEV\U2PL\data\crop5'
+root = r'D:\DATA\DQ3'
 save_path= root
 # copy_first_100_lines(os.path.join(save_path, 'unlabel.txt'), os.path.join(save_path, 'unlabel1.txt'))
-data_names =  os.listdir(os.path.join(root, "jpg"))
+data_names = os.listdir(os.path.join(root, "jpg"))
 # unlabel_data_names = os.listdir(os.path.join(root, "image_A"))
 # data_names = [i for i in data_names]
+random.shuffle(data_names)
 random.shuffle(data_names)
 # random.shuffle(unlabel_data_names)
 split_index = int(len(data_names) * split_rate)
@@ -31,8 +32,8 @@ val_lines = data_names[split_index:]
 # with open(os.path.join(save_path, 'unlabel.txt'), 'w') as f:
 #     f.write('\n'.join(unlabel_data_names))
 
-with open(os.path.join(save_path, 'train.txt'), 'w') as f:
+with open(os.path.join(save_path, 'train1.txt'), 'w') as f:
     f.write('\n'.join(train_lines))
 
-with open(os.path.join(save_path, 'val.txt'), 'w') as f:
+with open(os.path.join(save_path, 'val1.txt'), 'w') as f:
     f.write('\n'.join(val_lines))
