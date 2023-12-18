@@ -49,20 +49,20 @@ def compute_unsupervised_loss(predict, target, percent, pred_teacher):
 
 
 def compute_contra_memobank_loss(
-    rep,
-    label_l,
-    label_u,
-    prob_l,
-    prob_u,
-    low_mask,
-    high_mask,
-    cfg,
-    memobank,
-    queue_prtlis,
-    queue_size,
-    rep_teacher,
-    momentum_prototype=None,
-    i_iter=0,
+        rep,
+        label_l,
+        label_u,
+        prob_l,
+        prob_u,
+        low_mask,
+        high_mask,
+        cfg,
+        memobank,
+        queue_prtlis,
+        queue_size,
+        rep_teacher,
+        momentum_prototype=None,
+        i_iter=0,
 ):
     # current_class_threshold: delta_p (0.3)
     # current_class_negative_threshold: delta_n (1)
@@ -106,11 +106,11 @@ def compute_contra_memobank_loss(
 
         prob_seg = prob[:, i, :, :]
         rep_mask_low_entropy = (
-            prob_seg > current_class_threshold
-        ) * low_valid_pixel_seg.bool()
+                                       prob_seg > current_class_threshold
+                               ) * low_valid_pixel_seg.bool()
         rep_mask_high_entropy = (
-            prob_seg < current_class_negative_threshold
-        ) * high_valid_pixel_seg.bool()
+                                        prob_seg < current_class_negative_threshold
+                                ) * high_valid_pixel_seg.bool()
 
         seg_feat_all_list.append(rep[low_valid_pixel_seg.bool()])
         seg_feat_low_entropy_list.append(rep[rep_mask_low_entropy])
@@ -154,7 +154,7 @@ def compute_contra_memobank_loss(
             valid_classes.append(i)
 
     if (
-        len(seg_num_list) <= 1
+            len(seg_num_list) <= 1
     ):  # in some rare cases, a small mini-batch might only contain 1 or no semantic class
         if momentum_prototype is None:
             return new_keys, torch.tensor(0.0) * rep.sum()
@@ -172,8 +172,8 @@ def compute_contra_memobank_loss(
 
         for i in range(valid_seg):
             if (
-                len(seg_feat_low_entropy_list[i]) > 0
-                and memobank[valid_classes[i]][0].shape[0] > 0
+                    len(seg_feat_low_entropy_list[i]) > 0
+                    and memobank[valid_classes[i]][0].shape[0] > 0
             ):
                 # select anchor pixel
                 seg_low_entropy_idx = torch.randint(
@@ -200,20 +200,20 @@ def compute_contra_memobank_loss(
                 )
                 positive_feat = (
                     seg_proto[i]
-                    .unsqueeze(0)
-                    .unsqueeze(0)
-                    .repeat(num_queries, 1, 1)
-                    .cuda()
+                        .unsqueeze(0)
+                        .unsqueeze(0)
+                        .repeat(num_queries, 1, 1)
+                        .cuda()
                 )  # (num_queries, 1, num_feat)
 
                 if momentum_prototype is not None:
                     if not (momentum_prototype == 0).all():
                         ema_decay = min(1 - 1 / i_iter, 0.999)
                         positive_feat = (
-                            1 - ema_decay
-                        ) * positive_feat + ema_decay * momentum_prototype[
-                            valid_classes[i]
-                        ]
+                                                1 - ema_decay
+                                        ) * positive_feat + ema_decay * momentum_prototype[
+                                            valid_classes[i]
+                                        ]
 
                     prototype[valid_classes[i]] = positive_feat.clone()
 
@@ -246,6 +246,10 @@ def get_criterion(cfg):
     if cfg_criterion["type"] == "ohem":
         criterion = CriterionOhem(
             aux_weight, ignore_index=ignore_index, **cfg_criterion["kwargs"]
+        )
+    elif cfg_criterion["type"] == "focal":
+        criterion = Focal_Loss(
+            cls_weights=cfg_criterion["cls_weight"], num_classes=cfg["net"]["num_classes"], ignore_index=ignore_index
         )
     else:
         criterion = Criterion(
@@ -283,11 +287,11 @@ class Criterion(nn.Module):
             main_h, main_w = main_pred.size(2), main_pred.size(3)
             aux_h, aux_w = aux_pred.size(2), aux_pred.size(3)
             assert (
-                len(preds) == 2
-                and main_h == aux_h
-                and main_w == aux_w
-                and main_h == h
-                and main_w == w
+                    len(preds) == 2
+                    and main_h == aux_h
+                    and main_w == aux_w
+                    and main_h == h
+                    and main_w == w
             )
             if self.use_weight:
                 loss1 = self._criterion(main_pred, target) + self._criterion1(
@@ -304,14 +308,159 @@ class Criterion(nn.Module):
         return loss
 
 
+class Focal_Loss(nn.Module):
+    def __init__(self, cls_weights, num_classes=21, ignore_index=255, alpha=0.5, gamma=2):
+        super(Focal_Loss, self).__init__()
+        if len(cls_weights) == 0:
+            self.cls_weights = torch.ones([num_classes])
+        else:
+            self.cls_weights = cls_weights
+        self.ignore_index = ignore_index
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def forward(self, inputs, target):
+        n, c, h, w = inputs.size()
+        nt, ht, wt = target.size()
+        if h != ht and w != wt:
+            inputs = F.interpolate(inputs, size=(ht, wt), mode="bilinear", align_corners=True)
+
+        temp_inputs = inputs.transpose(1, 2).transpose(2, 3).contiguous().view(-1, c)
+        temp_target = target.view(-1)
+        logpt = -nn.CrossEntropyLoss(weight=self.cls_weights.to(temp_inputs.device), ignore_index=self.ignore_index,
+                                     reduction='none')(temp_inputs, temp_target)
+        pt = torch.exp(logpt)
+        if self.alpha is not None:
+            logpt *= self.alpha
+        loss = -((1 - pt) ** self.gamma) * logpt
+        loss = loss.mean()
+        return loss
+
+
+# def Focal_Loss(inputs, target, cls_weights=None, num_classes=21, alpha=0.5, gamma=2):
+#     if cls_weights is None:
+#         cls_weights = torch.ones([num_classes], device=inputs.device)
+#     n, c, h, w = inputs.size()
+#     nt, ht, wt = target.size()
+#     if h != ht and w != wt:
+#         inputs = F.interpolate(inputs, size=(ht, wt), mode="bilinear", align_corners=True)
+#
+#     temp_inputs = inputs.transpose(1, 2).transpose(2, 3).contiguous().view(-1, c)
+#     temp_target = target.view(-1)
+#
+#     logpt = -nn.CrossEntropyLoss(weight=cls_weights, ignore_index=num_classes, reduction='none')(temp_inputs,
+#                                                                                                  temp_target)
+#     pt = torch.exp(logpt)
+#     if alpha is not None:
+#         logpt *= alpha
+#     loss = -((1 - pt) ** gamma) * logpt
+#     loss = loss.mean()
+#     return loss
+
+
+# def Dice_loss(inputs, target, beta=1, smooth=1e-5):
+#     n, c, h, w = inputs.size()
+#     nt, ht, wt, ct = target.size()
+#     if h != ht and w != wt:
+#         inputs = F.interpolate(inputs, size=(ht, wt), mode="bilinear", align_corners=True)
+#
+#     temp_inputs = torch.softmax(inputs.transpose(1, 2).transpose(2, 3).contiguous().view(n, -1, c), -1)
+#     temp_target = target.view(n, -1, ct)
+#
+#     # --------------------------------------------#
+#     #   计算dice loss
+#     # --------------------------------------------#
+#     tp = torch.sum(temp_target[..., :-1] * temp_inputs, axis=[0, 1])
+#     fp = torch.sum(temp_inputs, axis=[0, 1]) - tp
+#     fn = torch.sum(temp_target[..., :-1], axis=[0, 1]) - tp
+#
+#     score = ((1 + beta ** 2) * tp + smooth) / ((1 + beta ** 2) * tp + beta ** 2 * fn + fp + smooth)
+#     dice_loss = 1 - torch.mean(score)
+#     return dice_loss
+
+
+class DiceLoss(nn.Module):
+    def __init__(self):
+        super(DiceLoss, self).__init__()
+
+    def forward(self, input, target):
+        N = target.size(0)
+        smooth = 1
+
+        input_flat = input.view(N, -1)
+        target_flat = target.view(N, -1)
+
+        intersection = input_flat * target_flat
+
+        loss = 2 * (intersection.sum(1) + smooth) / (input_flat.sum(1) + target_flat.sum(1) + smooth)
+        loss = 1 - loss.sum() / N
+
+        return loss
+
+
+class MulticlassDiceLoss(nn.Module):
+    """
+    requires one hot encoded target. Applies DiceLoss on each class iteratively.
+    requires input.shape[0:1] and target.shape[0:1] to be (N, C) where N is
+      batch size and C is number of classes
+    """
+
+    def __init__(self, num_cls=2, weights=None, smooth=1.0, beta=1.0):
+        super(MulticlassDiceLoss, self).__init__()
+        self.num_cls = num_cls
+        self.weights = weights
+        # self.dice = DiceLoss()
+        self.beta = beta
+        self.smooth = smooth
+
+    def forward(self, inputs, targets):
+
+        target = torch.nn.functional.one_hot(targets, num_classes=self.num_cls)
+
+        # if weights is None:
+        # 	weights = torch.ones(C) #uniform weights for all classes
+
+        n, c, h, w = inputs.size()
+        nt, ht, wt, ct = target.size()
+        if h != ht and w != wt:
+            inputs = F.interpolate(inputs, size=(ht, wt), mode="bilinear", align_corners=True)
+
+        temp_inputs = torch.softmax(inputs.transpose(1, 2).transpose(2, 3).contiguous().view(n, -1, c), -1)
+        temp_target = target.view(n, -1, ct)
+
+        # --------------------------------------------#
+        #   计算dice loss
+        # --------------------------------------------#
+        tp = torch.sum(temp_target * temp_inputs, axis=[0, 1])
+        fp = torch.sum(temp_inputs, axis=[0, 1]) - tp
+        fn = torch.sum(temp_target, axis=[0, 1]) - tp
+
+        score = ((1 + self.beta ** 2) * tp + self.smooth) / (
+                    (1 + self.beta ** 2) * tp + self.beta ** 2 * fn + fp + self.smooth)
+        if self.weights:
+            score = score * self.weights
+        dice_loss = 1 - torch.mean(score)
+        return dice_loss
+
+        # totalLoss = 0
+        #
+        # for i in range(self.num_cls):
+        #     diceLoss = self.dice(input[:, i], one_hot_target[..., i])
+        #     if self.weights is not None:
+        #         diceLoss *= self.weights[i]
+        #     totalLoss += diceLoss
+        #
+        # return totalLoss
+
+
 class CriterionOhem(nn.Module):
     def __init__(
-        self,
-        aux_weight,
-        thresh=0.7,
-        min_kept=100000,
-        ignore_index=255,
-        use_weight=False,
+            self,
+            aux_weight,
+            thresh=0.7,
+            min_kept=100000,
+            ignore_index=255,
+            use_weight=False,
     ):
         super(CriterionOhem, self).__init__()
         self._aux_weight = aux_weight
@@ -327,11 +476,11 @@ class CriterionOhem(nn.Module):
             main_h, main_w = main_pred.size(2), main_pred.size(3)
             aux_h, aux_w = aux_pred.size(2), aux_pred.size(3)
             assert (
-                len(preds) == 2
-                and main_h == aux_h
-                and main_w == aux_w
-                and main_h == h
-                and main_w == w
+                    len(preds) == 2
+                    and main_h == aux_h
+                    and main_w == aux_w
+                    and main_h == h
+                    and main_w == w
             )
 
             loss1 = self._criterion1(main_pred, target)
@@ -361,7 +510,7 @@ class OhemCrossEntropy2d(nn.Module):
 
         n, c, h, w = predict.shape
         min_kept = self.min_kept // (
-            factor * factor
+                factor * factor
         )  # int(self.min_kept_ratio * n * h * w)
 
         input_label = target.ravel().astype(np.int32)
@@ -411,8 +560,8 @@ class OhemCrossEntropy2d(nn.Module):
         input_label[valid_inds] = label
         new_target = (
             torch.from_numpy(input_label.reshape(target.size()))
-            .long()
-            .cuda(target.get_device())
+                .long()
+                .cuda(target.get_device())
         )
 
         return new_target
@@ -438,7 +587,7 @@ class OhemCrossEntropy2dTensor(nn.Module):
     """
 
     def __init__(
-        self, ignore_index=255, thresh=0.7, min_kept=256, use_weight=False, reduce=False
+            self, ignore_index=255, thresh=0.7, min_kept=256, use_weight=False, reduce=False
     ):
         super(OhemCrossEntropy2dTensor, self).__init__()
         self.ignore_index = ignore_index

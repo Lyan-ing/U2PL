@@ -5,6 +5,7 @@ import os
 import os.path as osp
 import pprint
 import random
+import shutil
 import time
 from copy import deepcopy
 from datetime import datetime
@@ -21,7 +22,7 @@ from tqdm import tqdm
 from u2pl.dataset.builder import get_loader
 from u2pl.models.model_helper import ModelBuilder
 from u2pl.utils.dist_helper import setup_distributed
-from u2pl.utils.loss_helper import get_criterion
+from u2pl.utils.loss_helper import get_criterion, MulticlassDiceLoss
 from u2pl.utils.lr_helper import get_optimizer, get_scheduler
 from u2pl.utils.utils import (
     AverageMeter,
@@ -74,9 +75,7 @@ def main():
     if rank == 0:
         logger.info("{}".format(pprint.pformat(cfg)))
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tb_logger = SummaryWriter(
-            osp.join(cfg["log_save_path"], current_time)
-        )
+        tb_logger = SummaryWriter(osp.join(cfg["log_save_path"], current_time))
     else:
         tb_logger = None
 
@@ -93,8 +92,8 @@ def main():
         # model_path = cfg['trainer']['naic_path']
         from u2pl.naic.deeplabv3_plus import DeepLabv3_plus
         import torch.nn as nn
-        model = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend=cfg["net"]["backbone"], os=16,
-                               pretrained=False, norm_layer=nn.BatchNorm2d)
+        model = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend=cfg["net"]["backbone"],
+                               os=16, pretrained=cfg["net"]["pretrain"] == '', norm_layer=nn.BatchNorm2d)
         # if not args.resume:
         #     loger.info(f"Model from NAIC DeeplabV3Plus from {model_path}..........")
         #     load_state(model_path, model, key="naic")
@@ -130,6 +129,9 @@ def main():
     )
 
     criterion = get_criterion(cfg)
+    dice_loss = None
+    if cfg["criterion"].get("dice_loss", False) and cfg["criterion"]["dice_loss"]:
+        dice_loss = MulticlassDiceLoss(num_cls=cfg["net"]["num_classes"])
 
     train_loader_sup, val_loader = get_loader(cfg, seed=seed)
 
@@ -166,12 +168,11 @@ def main():
 
     elif cfg["net"].get("pretrain", False):
         if cfg["net"]["base_model"] == "naic":
-            load_state(cfg["net"]["pretrain"], model, key="naic")
+            load_state(cfg["net"]["pretrain"], model, key="naic", type="need_module")
         elif cfg["net"]["base_model"] == "unet":
             load_state(cfg["net"]["pretrain"], model, key="naic", type="need_module")
         else:
             load_state(cfg["net"]["pretrain"], model, key="model_state")
-
 
     optimizer_old = get_optimizer(params_list, cfg_optim)
     lr_scheduler = get_scheduler(
@@ -220,6 +221,7 @@ def main():
             optimizer,
             lr_scheduler,
             criterion,
+            dice_loss,
             train_loader_sup,
             epoch,
             tb_logger,
@@ -288,6 +290,7 @@ def train(  # 蓝，青，绿
         optimizer,
         lr_scheduler,
         criterion,
+        dice_loss,
         data_loader,
         epoch,
         tb_logger,
@@ -300,6 +303,9 @@ def train(  # 蓝，青，绿
     rank, world_size = dist.get_rank(), dist.get_world_size()
 
     losses = AverageMeter(20)
+    if dice_loss:
+        loss_criterion = AverageMeter(20)
+        losses_dice = AverageMeter(20)
     data_times = AverageMeter(20)
     batch_times = AverageMeter(20)
     learning_rates = AverageMeter(20)
@@ -309,7 +315,7 @@ def train(  # 蓝，青，绿
         # json.dump(cfg, log)
         all_epoch = cfg["trainer"]["epochs"]
         len_iter = len(data_loader)
-        all_iter = cfg["trainer"]["epochs"]*len_iter
+        all_iter = cfg["trainer"]["epochs"] * len_iter
         for step in range(len_iter):
             batch_start = time.time()
             data_times.update(batch_start - batch_end)
@@ -332,6 +338,12 @@ def train(  # 蓝，青，绿
                 loss = criterion([pred, aux], label)
             else:
                 loss = criterion(pred, label)
+            # use_dice = True
+            if dice_loss is not None:
+                loss_criterion.update(loss.item())
+                loss_dice = dice_loss(pred, label)
+                losses_dice.update(loss_dice.item())
+                loss +=loss_dice
 
             optimizer.zero_grad()
             loss.backward()
@@ -346,28 +358,52 @@ def train(  # 蓝，青，绿
             batch_times.update(batch_end - batch_start)
 
             if i_iter % 20 == 0 and rank == 0:
-
-                logger.info(
-                    "Epoch [{}/{}]\t"
-                    "Iter [{}/{}]\t"
-                    "Data {data_time.val:.2f} ({data_time.avg:.2f})\t"
-                    "Time {batch_time.val:.2f} ({batch_time.avg:.2f})\t"
-                    "Loss {loss.val:.4f} ({loss.avg:.4f})\t"
-                    "LR {lr.val:.5f} ({lr.avg:.5f})\t".format(
-                        epoch,
-                        all_epoch,
-                        step,
-                        len_iter,
-                        data_time=data_times,
-                        batch_time=batch_times,
-                        loss=losses,
-                        lr=learning_rates,
+                if dice_loss:
+                    logger.info(
+                        "Epoch [{}/{}]\t"
+                        "Iter [{}/{}]\t"
+                        "Time {batch_time.val:.2f} ({batch_time.avg:.2f})\t"
+                        "Loss {loss.val:.4f} ({loss.avg:.4f})\t"
+                        "CE Loss {ce.val:.4f} ({ce.avg:.4f})\t"
+                        "Dice Loss {dice.val:.4f} ({dice.avg:.4f})\t"
+                        "LR {lr.val:.5f} ({lr.avg:.5f})\t".format(
+                            epoch,
+                            all_epoch,
+                            step,
+                            len_iter,
+                            batch_time=batch_times,
+                            loss=losses,
+                            ce=loss_criterion,
+                            dice=losses_dice,
+                            lr=learning_rates,
+                        )
                     )
-                )
-                dict_json = {"FLAG": "[Train]", "Epoch": f"[{epoch}/{all_epoch}]", "Iter": f"[{i_iter}/{all_iter}]",
-                             "Loss": f"{losses.val:.4f} ({losses.avg:.4f}) ",
-                             "LR": f"{learning_rates.val:.5f} ({learning_rates.avg:.5f})",
-                             "Time": f"{batch_times.val:.2f} ({batch_times.avg:.2f})"}
+                    dict_json = {"FLAG": "[Train]", "Epoch": f"[{epoch}/{all_epoch}]", "Iter": f"[{i_iter}/{all_iter}]",
+                                 "Loss": f"{losses.val:.4f} ({losses.avg:.4f}) ",
+                                 "CE Loss": f"{loss_criterion.val:.4f} ({loss_criterion.avg:.4f})",
+                                 "Dice Loss": f"{losses_dice.val:.4f} ({losses_dice.avg:.4f})",
+                                 "LR": f"{learning_rates.val:.5f} ({learning_rates.avg:.5f})",
+                                 "Time": f"{batch_times.val:.2f} ({batch_times.avg:.2f})"}
+                else:
+                    logger.info(
+                        "Epoch [{}/{}]\t"
+                        "Iter [{}/{}]\t"
+                        "Time {batch_time.val:.2f} ({batch_time.avg:.2f})\t"
+                        "Loss {loss.val:.4f} ({loss.avg:.4f})\t"
+                        "LR {lr.val:.5f} ({lr.avg:.5f})\t".format(
+                            epoch,
+                            all_epoch,
+                            step,
+                            len_iter,
+                            batch_time=batch_times,
+                            loss=losses,
+                            lr=learning_rates,
+                        )
+                    )
+                    dict_json = {"FLAG": "[Train]", "Epoch": f"[{epoch}/{all_epoch}]", "Iter": f"[{i_iter}/{all_iter}]",
+                                 "Loss": f"{losses.val:.4f} ({losses.avg:.4f}) ",
+                                 "LR": f"{learning_rates.val:.5f} ({learning_rates.avg:.5f})",
+                                 "Time": f"{batch_times.val:.2f} ({batch_times.avg:.2f})"}
                 json.dump(dict_json, log)
                 # "FLAG: [Train]    Epoch [{}/{}]    Iter [{}/{}]    "
                 # "Data {data_time.val:.2f} ({data_time.avg:.2f})    "
@@ -386,7 +422,10 @@ def train(  # 蓝，青，绿
                 log.write('\n')
                 log.flush()
                 tb_logger.add_scalar("lr", learning_rates.avg, i_iter)
-                tb_logger.add_scalar("Loss", losses.avg, i_iter)
+                tb_logger.add_scalar("loss/Loss", losses.avg, i_iter)
+                if dice_loss:
+                    tb_logger.add_scalar("loss/CE Loss", loss_criterion.avg, i_iter)
+                    tb_logger.add_scalar("loss/Dice Loss", losses_dice.avg, i_iter)
 
 
 def validate(
