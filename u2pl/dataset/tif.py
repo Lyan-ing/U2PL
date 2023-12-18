@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
 from osgeo import gdal
-import augmentation as psp_trsform
+import augmentation_tif as psp_trsform
 # from . import augmentation as psp_trsform
 from base import BaseDataset
 
@@ -56,7 +56,9 @@ class tif_dset(BaseDataset):
             label = Image.open(label_path)
         else:
             label = Image.fromarray(np.zeros((image.size[1], image.size[0]), dtype=np.uint8))
-        image, label = self.transform(image, label)
+        image, label, img_nir = self.transform(image, label, img_nir)
+        if image_nir is not None:
+            image = torch.cat((image, img_nir), dim=1)
         return image[0], label[0, 0].long()
 
     def __len__(self):
@@ -105,7 +107,7 @@ def build_vocloader(split, all_cfg, seed=0):
     n_sup = cfg.get("n_sup", 10582)
     # build transform
     trs_form = build_transfrom(cfg)
-    dset = voc_dset(cfg["data_root"], os.path.join(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"])),
+    dset = tif_dset(cfg["data_root"], os.path.join(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"])),
                     trs_form=trs_form, seed=seed, n_sup=n_sup)
 
     # build sampler
@@ -135,7 +137,7 @@ def build_costum_loader(split, all_cfg, seed=0):
     # n_sup = cfg.get("n_sup", 10582)
     # build transform
     trs_form = build_transfrom(cfg)
-    dset = voc_dset(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"]), 'costum', trs_form=trs_form,
+    dset = tif_dset(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"]), 'costum', trs_form=trs_form,
                     seed=seed)
 
     # build sampler
@@ -165,7 +167,7 @@ def build_voc_semi_loader(split, all_cfg, seed=0):
     # build transform
     trs_form = build_transfrom(cfg)
     trs_form_unsup = build_transfrom(cfg)
-    dset = voc_dset(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"]), trs_form=trs_form, seed=seed,
+    dset = tif_dset(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"]), trs_form=trs_form, seed=seed,
                     n_sup=n_sup, split=split)
 
     if split == "val":
@@ -184,7 +186,7 @@ def build_voc_semi_loader(split, all_cfg, seed=0):
     else:
         # build sampler for unlabeled set
         data_list_unsup = os.path.join(cfg["data_root"], cfg["data_list"]).replace("labeled.txt", "unlabeled.txt")
-        dset_unsup = voc_dset(
+        dset_unsup = tif_dset(
             cfg["data_root"], data_list_unsup, trs_form=trs_form_unsup, seed=seed, n_sup=n_sup, split=split,
             mode='unlabel'
         )
@@ -240,12 +242,12 @@ def build_costum_semi_loader(split, all_cfg, seed=0):
         n_sup = line_count if line_count_unsup < line_count else line_count_unsup
         loguru.logger.info(f"训练样本数量为 2 * {n_sup}")
         # .replace("labeled.txt", "unlabeled.txt")
-        dset_unsup = voc_dset(
+        dset_unsup = tif_dset(
             cfg["data_root"], data_list_unsup, 'costum', trs_form_unsup, seed, n_sup, split=split, mode="unlabel"
         )
         # n_sup = len(dset_unsup.list_sample_new)  # 計算一下無標記圖像的數量，將標籤圖像重複採樣至於無標記圖像相同
 
-    dset = voc_dset(cfg["data_root"], data_list, 'costum', trs_form, seed, n_sup,
+    dset = tif_dset(cfg["data_root"], data_list, 'costum', trs_form, seed, n_sup,
                     split)
 
     if split == "val":

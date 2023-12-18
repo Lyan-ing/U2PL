@@ -32,16 +32,16 @@ class Compose(object):
     def __init__(self, segtransforms):
         self.segtransforms = segtransforms
 
-    def __call__(self, image, label):
+    def __call__(self, image, label, image_nir=None):
         # valid = None
         for idx, t in enumerate(self.segtransforms):
-            out = t(image, label)
-            if len(out) == 2:
-                image, label = out
-            elif len(out) == 5:
-                img_origin, label_origin, img, label, valid = out
-            elif len(out) == 3:
-                img, label, masks = out
+            out = t(image, label, image_nir)
+            if len(out) == 3:
+                image, label, image_nir = out
+            elif len(out) == 6:
+                img_origin, label_origin, img, label, valid, image_nir = out
+            elif len(out) == 4:
+                img, label, masks, image_nir = out
             # if idx < 5:
             #     image, label = t(image, label)
             # else:
@@ -50,23 +50,26 @@ class Compose(object):
             #     except:
             #         img, label, masks = t(image, label)
 
-        if len(out) == 2:
-            return image, label
-        elif len(out) == 5:
-            return img_origin, label_origin, img, label, valid
-        elif len(out) == 3:  #
-            return img, label, masks
+        if len(out) == 3:
+            return image, label, image_nir
+        elif len(out) == 6:
+            return img_origin, label_origin, img, label, valid, image_nir
+        elif len(out) == 4:  #
+            return img, label, masks, image_nir
 
 
 class ToTensor(object):
     # Converts a PIL Image or numpy.ndarray (H x W x C) to a torch.FloatTensor of shape (1 x C x H x W).
-    def __call__(self, image, label):
+    def __call__(self, image, label, image_nir=None):
         if isinstance(image, Image.Image) and isinstance(label, Image.Image):
             image = np.asarray(image)
             label = np.array(label)  # / 100  # 修改，使其能夠直接讀取png並轉化為mask，取百位获得一级标签
             # label[label == 8] = 0  # 将数据集中的背景8转化为0
             image = image.copy()
             label = label.copy()
+            if image_nir is not None:
+                image_nir = np.asarray(image_nir)
+                image_nir = image_nir.copy()
         elif not isinstance(image, np.ndarray) or not isinstance(label, np.ndarray):
             raise (
                 RuntimeError(
@@ -82,6 +85,9 @@ class ToTensor(object):
             )
         if len(image.shape) == 2:
             image = np.expand_dims(image, axis=2)
+        if image_nir is not None:
+            if len(image_nir.shape) == 2:
+                image_nir = np.expand_dims(image_nir, axis=2)
         if not len(label.shape) == 2:
             raise (
                 RuntimeError(
@@ -90,12 +96,17 @@ class ToTensor(object):
             )
 
         image = torch.from_numpy(image.transpose((2, 0, 1))[np.newaxis])
+        if image_nir is not None:
+            image_nir = torch.from_numpy(image_nir.transpose((2, 0, 1))[np.newaxis])
         if not isinstance(image, torch.FloatTensor):
             image = image.float()
+        if image_nir is not None:
+            if not isinstance(image_nir, torch.FloatTensor):
+                image_nir = image_nir.float()
         label = torch.from_numpy(label[np.newaxis, np.newaxis])
         if not isinstance(label, torch.FloatTensor):
             label = label.float()
-        return image, label
+        return image, label, image_nir
 
 
 class Normalize(object):
@@ -113,14 +124,16 @@ class Normalize(object):
             self.std = torch.Tensor(np.float32(std)[:, np.newaxis, np.newaxis])
         self.mean = torch.Tensor(np.float32(mean)[:, np.newaxis, np.newaxis])
 
-    def __call__(self, image, label):
+    def __call__(self, image, label, image_nir=None):
         assert image.size(1) == len(self.mean)
         if self.std is None:
             image -= self.mean
         else:
             image -= self.mean
             image /= self.std
-        return image, label
+        if image_nir is not None:
+            image_nir /= 255
+        return image, label, image_nir
 
 
 class Resize(object):
@@ -133,12 +146,12 @@ class Resize(object):
         assert isinstance(size, collections.Iterable) and len(size) == 2
         self.size = size
 
-    def __call__(self, image, label):
-        image = F.interpolate(
-            image, size=self.size, mode="bilinear", align_corners=False
-        )
+    def __call__(self, image, label, image_nir=None):
+        image = F.interpolate(image, size=self.size, mode="bilinear", align_corners=False)
+        if image_nir is not None:
+            image_nir = F.interpolate(image_nir, size=self.size, mode="bilinear", align_corners=False)
         label = F.interpolate(label, size=self.size, mode="nearest")
-        return image, label
+        return image, label, image_nir
 
 
 class ResizeLongSize(object):
@@ -150,22 +163,26 @@ class ResizeLongSize(object):
         assert type(size) == int, "Long size must be an integer"
         self.size = size
 
-    def __call__(self, image, label):
+    def __call__(self, image, label, image_nir=None):
         _, _, h, w = image.size()
         if h > w:
             w_r = int(self.size * w / h)
             image = F.interpolate(
                 image, size=(self.size, w_r), mode="bilinear", align_corners=False
             )
+            if image_nir is not None:
+                image_nir = F.interpolate(image_nir, size=(self.size, w_r), mode="bilinear", align_corners=False)
             label = F.interpolate(label, size=(self.size, w_r), mode="nearest")
         else:
             h_r = int(2048 * h / w)
             image = F.interpolate(
                 image, size=(h_r, self.size), mode="bilinear", align_corners=False
             )
+            if image_nir is not None:
+                image_nir = F.interpolate(image_nir, size=(h_r, self.size), mode="bilinear", align_corners=False)
             label = F.interpolate(label, size=(h_r, self.size), mode="nearest")
 
-        return image, label
+        return image, label, image_nir
 
 
 class RandResize(object):
@@ -199,7 +216,7 @@ class RandResize(object):
                 RuntimeError("segtransforms.RandScale() aspect_ratio param error.\n")
             )
 
-    def __call__(self, image, label):
+    def __call__(self, image, label, image_nir=None):
         if random.random() < 0.5:
             temp_scale = self.scale[0] + (1.0 - self.scale[0]) * random.random()
         else:
@@ -216,11 +233,11 @@ class RandResize(object):
         h, w = image.size()[-2:]
         new_w = int(w * scale_factor_w)
         new_h = int(h * scale_factor_h)
-        image = F.interpolate(
-            image, size=(new_h, new_w), mode="bilinear", align_corners=False
-        )
+        image = F.interpolate(image, size=(new_h, new_w), mode="bilinear", align_corners=False)
+        if image_nir is not None:
+            image_nir = F.interpolate(image_nir, size=(new_h, new_w), mode="bilinear", align_corners=False)
         label = F.interpolate(label, size=(new_h, new_w), mode="nearest")
-        return image, label
+        return image, label, image_nir
 
 
 class Crop(object):
@@ -256,7 +273,7 @@ class Crop(object):
         else:
             raise (RuntimeError("ignore_label should be an integer number\n"))
 
-    def __call__(self, image, label):
+    def __call__(self, image, label, image_nir=None):
         h, w = image.size()[-2:]
         pad_h = max(self.crop_h - h, 0)
         pad_w = max(self.crop_w - w, 0)
@@ -274,8 +291,10 @@ class Crop(object):
             h_off = (h - self.crop_h) // 2
             w_off = (w - self.crop_w) // 2
         image = image[:, :, h_off: h_off + self.crop_h, w_off: w_off + self.crop_w]
+        if image_nir is not None:
+            image_nir = image_nir[:, :, h_off: h_off + self.crop_h, w_off: w_off + self.crop_w]
         label = label[:, :, h_off: h_off + self.crop_h, w_off: w_off + self.crop_w]
-        return image, label
+        return image, label, image_nir
 
 
 class RandRotate(object):
@@ -294,67 +313,74 @@ class RandRotate(object):
         assert isinstance(ignore_label, int)
         self.ignore_label = ignore_label
 
-    def __call__(self, image, label):
+    def __call__(self, image, label, image_nir=None):
         angle = self.rotate[0] + (self.rotate[1] - self.rotate[0]) * random.random()
         M = cv2.getRotationMatrix2D((0, 0), angle, 1)
         t_M = torch.Tensor(M).unsqueeze(dim=0)
         grid = F.affine_grid(t_M, image.size())
 
         image = F.grid_sample(image, grid, mode="bilinear", align_corners=False)
+        if image_nir is not None:
+            image_nir = F.grid_sample(image_nir, grid, mode="bilinear", align_corners=False)
         label += 1
         label = F.grid_sample(label, grid, mode="nearest", align_corners=False)
         label[label == 0.0] = self.ignore_label + 1
         label -= 1
-        return image, label
+        return image, label, image_nir
 
 
 class RandomHorizontalFlip(object):
-    def __call__(self, image, label):
+    def __call__(self, image, label, image_nir=None):
         if random.random() < 0.5:
             image = torch.flip(image, [3])
+            if image_nir is not None:
+                image_nir = torch.flip(image_nir, [3])
             label = torch.flip(label, [3])
-        return image, label
+        return image, label, image_nir
 
 
 class RandomColorJitter(object):
     def __init__(self):
         self.ColorJitter = torchvision.transforms.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.2)
 
-    def __call__(self, image, label):
+    def __call__(self, image, label, image_nir=None):
         if random.random() < 0.8:
             image = self.ColorJitter(image)
-        return image, label
+        return image, label, image_nir
 
 
 class ConvertLabel(object):
-    def __init__(self, convert_dict = None):
+    def __init__(self, convert_dict=None):
         self.convert_dict = convert_dict
-    def __call__(self, image, label):
+
+    def __call__(self, image, label, image_nir=None):
         convert_label = torch.zeros_like(label)
         for original_val, new_val in self.convert_dict.items():
             convert_label[label == original_val] = new_val
         # if random.random() < 0.5:
         #     image = torchvision.transforms.ColorJitter(image, contrast=0.5, saturation=0.5, hue=0.5, brightness=0.5)
-            # label = torch.flip(label, [3])
-        return image, convert_label
+        # label = torch.flip(label, [3])
+        return image, convert_label, image_nir
 
 
 class RandomVerticalFlip(object):
-    def __call__(self, image, label):
+    def __call__(self, image, label, image_nir=None):
         if random.random() < 0.5:
             image = torch.flip(image, [2])
+            if image_nir is not None:
+                image_nir = torch.flip(image_nir, [2])
             label = torch.flip(label, [2])
-        return image, label
+        return image, label, image_nir
 
 
 class RandomGaussianBlur(object):
     def __init__(self, radius=2):
         self._filter = GaussianBlur(radius=radius)
 
-    def __call__(self, image, label):
+    def __call__(self, image, label, image_nir=None):
         if random.random() < 0.5:
-            image = self._filter(image)
-        return image, label
+            image = self._filter(image)  #
+        return image, label, image_nir
 
 
 class GaussianBlur(nn.Module):
@@ -392,7 +418,7 @@ class Cutout(object):
         self.n_holes = n_holes
         self.length = length
 
-    def __call__(self, img, label):
+    def __call__(self, img, label, image_nir=None):
         """
         Args:
             img (Tensor): Tensor image of size (C, H, W).
@@ -403,6 +429,9 @@ class Cutout(object):
         h = img.size(2)
         w = img.size(3)
         img_origin = img.clone()
+        image_nir_ori = None
+        if image_nir is not None:
+            image_nir_ori = image_nir.clone()
         label_origin = label.clone()
         mask = np.ones((h, w), np.float32)
         valid = np.zeros((h, w), np.float32)
@@ -419,7 +448,7 @@ class Cutout(object):
             mask[y1:y2, x1:x2] = 0.0
             valid[y1:y2, x1:x2] = 255
 
-        mask = torch.from_numpy(mask)
+        mask = torch.from_numpy(mask1)
         valid = torch.from_numpy(valid)
         valid = valid.expand_as(label_origin)
         mask = mask.expand_as(img)
@@ -427,7 +456,7 @@ class Cutout(object):
 
         # label = label + mask
         # label[label>20] = 255
-        return img_origin, label_origin, img, label, valid
+        return img_origin, label_origin, img, label, valid, image_nir, image_nir_ori
 
 
 class Cutmix(object):
@@ -446,7 +475,7 @@ class Cutmix(object):
         self.random_aspect_ratio = random_aspect_ratio
         self.within_bounds = within_bounds
 
-    def __call__(self, img, label):
+    def __call__(self, img, label, image_nir=None):
         """
         Args:
             img (Tensor): Tensor image of size (C, H, W).
@@ -500,7 +529,7 @@ class Cutmix(object):
 
         masks = torch.from_numpy(masks)
 
-        return img, label, masks
+        return img, label, masks, image_nir
 
 
 def generate_cutout_mask(img_size, ratio=2):
