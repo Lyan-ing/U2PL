@@ -60,6 +60,8 @@ def build_transfrom(cfg):
     #     from . import augmentation_label_convert as psp_trsform
     trs_form = []
     mean, std, ignore_label = cfg["mean"], cfg["std"], cfg["ignore_label"]
+    if cfg.get("ColorJitter", False) and cfg["ColorJitter"]:
+        trs_form.append(psp_trsform.RandomColorJitter())
     trs_form.append(psp_trsform.ToTensor())
     trs_form.append(psp_trsform.Normalize(mean=mean, std=std))
     if cfg.get("resize", False):
@@ -275,3 +277,19 @@ def build_costum_semi_loader(split, all_cfg, seed=0):
             drop_last=True,
         )
         return loader_sup, loader_unsup
+
+
+
+def main():
+    import torch
+    import torchvision.transforms as f
+    from PIL import Image
+
+    img_path = "1.jpg"
+    img = Image.open(img_path)
+    trans = f.ColorJitter(brightness=0.8)
+    image = trans(img)
+    image.show()
+
+if __name__ == "__main__":
+    main()

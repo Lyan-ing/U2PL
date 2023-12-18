@@ -2,16 +2,17 @@ dataset: # Required.
   type: costum
   data_root: D:\DATA\DQ3
   train:
-    data_list: train.txt
+    data_list: train1.txt
     flip: True
     GaussianBlur: False
-#    rand_resize: [0.5, 2.0]
+    ColorJitter: True
+    rand_resize: [0.5, 2.0]
     #rand_rotation: [-10.0, 10.0]
     crop:
       type: rand
       size: [512, 512] # crop image with HxW size
   val:
-    data_list: val.txt
+    data_list: val1.txt
     crop:
       type: center
       size: [512,512] # crop image with HxW size
@@ -40,11 +41,13 @@ trainer: # Required.
 saver:
   exp_path: ckpt
   log_path: log
-  task_name: dq
-  task_idx: dq_r50_1
+  task_name: voc
+  task_idx: naic_r50_6
 
 criterion:
-  type: CELoss
+  type: focal
+  cls_weight: []
+  dice_loss: True
   kwargs:  
     use_weight: False
 

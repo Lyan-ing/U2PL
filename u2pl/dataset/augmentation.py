@@ -1,5 +1,7 @@
 import collections
 
+import torchvision.transforms
+
 collections.Iterable = collections.abc.Iterable
 import math
 import numbers
@@ -31,21 +33,28 @@ class Compose(object):
         self.segtransforms = segtransforms
 
     def __call__(self, image, label):
-        valid = None
+        # valid = None
         for idx, t in enumerate(self.segtransforms):
-            if idx < 5:
-                image, label = t(image, label)
-            else:
-                try:
-                    img_origin, label_origin, img, label, valid = t(image, label)
-                except:
-                    img, label, masks = t(image, label)
+            out = t(image, label)
+            if len(out) == 2:
+                image, label = out
+            elif len(out) == 5:
+                img_origin, label_origin, img, label, valid = out
+            elif len(out) == 3:
+                img, label, masks = out
+            # if idx < 5:
+            #     image, label = t(image, label)
+            # else:
+            #     try:
+            #         img_origin, label_origin, img, label, valid = t(image, label)
+            #     except:
+            #         img, label, masks = t(image, label)
 
-        if idx < 5:
+        if len(out) == 2:
             return image, label
-        elif valid is not None:
+        elif len(out) == 5:
             return img_origin, label_origin, img, label, valid
-        else:  #
+        elif len(out) == 3:  #
             return img, label, masks
 
 
@@ -306,6 +315,28 @@ class RandomHorizontalFlip(object):
             label = torch.flip(label, [3])
         return image, label
 
+
+class RandomColorJitter(object):
+    def __init__(self):
+        self.ColorJitter = torchvision.transforms.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.2)
+
+    def __call__(self, image, label):
+        if random.random() < 0.8:
+            image = self.ColorJitter(image)
+        return image, label
+
+
+class ConvertLabel(object):
+    def __init__(self, convert_dict = None):
+        self.convert_dict = convert_dict
+    def __call__(self, image, label):
+        convert_label = torch.zeros_like(label)
+        for original_val, new_val in self.convert_dict.items():
+            convert_label[label == original_val] = new_val
+        # if random.random() < 0.5:
+        #     image = torchvision.transforms.ColorJitter(image, contrast=0.5, saturation=0.5, hue=0.5, brightness=0.5)
+            # label = torch.flip(label, [3])
+        return image, convert_label
 
 class RandomVerticalFlip(object):
     def __call__(self, image, label):
