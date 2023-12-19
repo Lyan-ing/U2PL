@@ -44,7 +44,7 @@ class LRScheduler(object):
         super(LRScheduler, self).__init__()
         logger = logging.getLogger("global")
 
-        assert mode in ["multistep", "poly", "cosine"]
+        assert mode in ["step", "poly", "cosine"]
         self.mode = mode
         self.optimizer = optimizer
         self.data_size = data_size
@@ -63,8 +63,8 @@ class LRScheduler(object):
         if mode == "poly":
             self.power = lr_args["power"] if lr_args.get("power", False) else 0.9
             logger.info("The kwargs for lr scheduler: {}".format(self.power))
-        if mode == "milestones":
-            default_mist = list(range(0, num_epochs, num_epochs // 3))[1:]
+        if mode == "step":
+            default_mist = list(range(0, num_epochs, num_epochs // 3))[2:]
             self.milestones = (
                 lr_args["milestones"]
                 if lr_args.get("milestones", False)
