@@ -314,7 +314,7 @@ class Focal_Loss(nn.Module):
         if len(cls_weights) == 0:
             self.cls_weights = torch.ones([num_classes])
         else:
-            self.cls_weights = cls_weights
+            self.cls_weights = torch.tensor(cls_weights, dtype=torch.float32)
         self.ignore_index = ignore_index
         self.alpha = alpha
         self.gamma = gamma
