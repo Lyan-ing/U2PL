@@ -12,9 +12,9 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
 from osgeo import gdal
-import augmentation_tif as psp_trsform
+from . import augmentation_tif as psp_trsform
 # from . import augmentation as psp_trsform
-from base import BaseDataset
+from .base import BaseDataset
 
 
 # from .base import BaseDataset
@@ -50,13 +50,13 @@ class tif_dset(BaseDataset):
         image_nir = image_tif[3]
         image_nir = (image_nir - image_nir.min()) / (image_nir.max() - image_nir.min()) * 255
         image = Image.fromarray(image_rgb.transpose(1, 2, 0), mode="RGB")
-        img_nir = Image.fromarray(image_nir, mode="L")
+        image_nir = Image.fromarray(image_nir, mode="L")
         if self.mode == 'label':  # 無標簽數據生成全0mask
             label_path = os.path.join(self.data_root, self.list_sample_new[index][1])
             label = Image.open(label_path)
         else:
             label = Image.fromarray(np.zeros((image.size[1], image.size[0]), dtype=np.uint8))
-        image, label, img_nir = self.transform(image, label, img_nir)
+        image, label, img_nir = self.transform(image, label, image_nir)
         if image_nir is not None:
             image = torch.cat((image, img_nir), dim=1)
         return image[0], label[0, 0].long()
@@ -124,7 +124,7 @@ def build_vocloader(split, all_cfg, seed=0):
     return loader
 
 
-def build_costum_loader(split, all_cfg, seed=0):
+def build_costum_tif_loader(split, all_cfg, seed=0):
     cfg_dset = all_cfg["dataset"]
 
     cfg = copy.deepcopy(cfg_dset)
@@ -299,7 +299,7 @@ def main():
     cfg.update(cfg.get('train', {}))
     trs_form = build_transfrom(cfg)
     dset = tif_dset(cfg["data_root"], os.path.join(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"])),
-                    'costum', trs_form=trs_form, seed=0, mode='unlabel')
+                    'costum', trs_form=trs_form, seed=0, mode='label')
     # sample = DistributedSampler(dset)
 
     loader = DataLoader(

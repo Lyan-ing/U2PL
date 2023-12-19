@@ -11,8 +11,10 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
-
+from osgeo import gdal
+# import augmentation as psp_trsforms
 from . import augmentation as psp_trsform
+# from base import BaseDataset as BaseDatasets
 from .base import BaseDataset
 
 
@@ -43,6 +45,51 @@ class voc_dset(BaseDataset):
         image_path = os.path.join(self.data_root, self.list_sample_new[index][0])
 
         image = self.img_loader(image_path, "RGB")
+        if self.mode == 'label':  # 無標簽數據生成全0mask
+            label_path = os.path.join(self.data_root, self.list_sample_new[index][1])
+            label = Image.open(label_path)
+        else:
+            label = Image.fromarray(np.zeros((image.size[1], image.size[0]), dtype=np.uint8))
+        image, label = self.transform(image, label)
+        return image[0], label[0, 0].long()
+
+    def __len__(self):
+        return len(self.list_sample_new)
+
+
+class tif_dset(BaseDataset):
+    def __init__(
+            self, data_root, data_list, data_type, trs_form, seed=0, n_sup=10582, split="val", mode='label'
+    ):
+        self.mode = mode
+        super(tif_dset, self).__init__(data_list, data_type)
+        self.data_root = data_root
+        # self.mode = mode
+        self.transform = trs_form
+        random.seed(seed)
+        if split == "train" and len(self.list_sample) > n_sup:
+            self.list_sample_new = random.sample(self.list_sample, n_sup)
+        elif split == "train" and len(self.list_sample) < n_sup:
+            num_repeat = math.ceil(n_sup / len(self.list_sample))
+            self.list_sample = self.list_sample * num_repeat
+
+            self.list_sample_new = random.sample(self.list_sample, n_sup)
+        else:
+            self.list_sample_new = self.list_sample
+
+        del self.list_sample  # del掉原始list，減少無用數據
+
+    def __getitem__(self, index):
+        # load image and its label
+        image_path = os.path.join(self.data_root, self.list_sample_new[index][0])
+        image_tif = gdal.Open(image_path).ReadAsArray()
+        # scale to 255
+        image_rgb = image_tif[:3]
+        image_rgb = (image_rgb - image_rgb.min()) / (image_rgb.max() - image_rgb.min()) *255
+        image_nir = image_tif[3]
+        image_nir = (image_nir - image_nir.min()) / (image_nir.max() - image_nir.min()) * 255
+        image = Image.fromarray(image_rgb.transpose(1, 2, 0), mode="RGB")
+        img_nir = Image.fromarray(image_nir, mode="L")
         if self.mode == 'label':  # 無標簽數據生成全0mask
             label_path = os.path.join(self.data_root, self.list_sample_new[index][1])
             label = Image.open(label_path)
@@ -279,17 +326,38 @@ def build_costum_semi_loader(split, all_cfg, seed=0):
         return loader_sup, loader_unsup
 
 
-
 def main():
     import torch
     import torchvision.transforms as f
+    import yaml
     from PIL import Image
+    cfg = yaml.load(open(r'E:\python\ZEV\U2PL\config\config_cos_sup_unet.yaml', "r"), Loader=yaml.Loader)["dataset"]
+    cfg["data_root"] = r"E:\python\ZEV\U2PL\cloud"
+    cfg.update(cfg.get('train', {}))
+    trs_form = build_transfrom(cfg)
+    dset = tif_dset(cfg["data_root"], os.path.join(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"])),
+                    'costum', trs_form=trs_form, seed=0, mode='unlabel')
+    # sample = DistributedSampler(dset)
 
-    img_path = "1.jpg"
-    img = Image.open(img_path)
-    trans = f.ColorJitter(brightness=0.8)
-    image = trans(img)
-    image.show()
+    loader = DataLoader(
+        dset,
+        batch_size=1,
+        num_workers=0,
+        # sampler=sample,
+        shuffle=False,
+        pin_memory=False,
+    )
+    for i, batch in enumerate(loader):
+        a = batch
+        print()
+        pass
+
+    # img_path = tif_dset()
+    # img = Image.open(img_path)
+    # trans = f.ColorJitter(brightness=0.8)
+    # image = trans(img)
+    # image.show()
+
 
 if __name__ == "__main__":
     main()

@@ -338,6 +338,7 @@ class ConvertLabel(object):
             # label = torch.flip(label, [3])
         return image, convert_label
 
+
 class RandomVerticalFlip(object):
     def __call__(self, image, label):
         if random.random() < 0.5:

@@ -2,7 +2,7 @@ import logging
 
 from .cityscapes import build_city_semi_loader, build_cityloader
 from .pascal_voc import build_voc_semi_loader, build_vocloader, build_costum_loader, build_costum_semi_loader
-
+from .tif import build_costum_tif_loader
 logger = logging.getLogger("global")
 
 
@@ -49,6 +49,12 @@ def get_loader(cfg, seed=0):
     elif cfg_dataset["type"] == "costum":
         train_loader_sup = build_costum_loader("train", cfg, seed=seed)
         val_loader = build_costum_loader("val", cfg)
+        logger.info("Get loader Done...")
+        return train_loader_sup, val_loader
+
+    elif cfg_dataset["type"] == "costum_tif":
+        train_loader_sup = build_costum_tif_loader("train", cfg, seed=seed)
+        val_loader = build_costum_tif_loader("val", cfg)
         logger.info("Get loader Done...")
         return train_loader_sup, val_loader
     else:
