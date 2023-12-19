@@ -80,7 +80,7 @@ def main():
         tb_logger = None
 
     if args.seed is not None:
-        print("set random seed to", args.seed)
+        loger.info("set random seed to", args.seed)
         set_random_seed(args.seed)
 
     if rank == 0:
@@ -92,7 +92,8 @@ def main():
         # model_path = cfg['trainer']['naic_path']
         from u2pl.naic.deeplabv3_plus import DeepLabv3_plus
         import torch.nn as nn
-        model = DeepLabv3_plus(in_channels=3, num_classes=cfg["net"]["num_classes"], backend=cfg["net"]["backbone"],
+        in_channels = cfg["net"]["in_channels"] if cfg["net"].get("in_channels") else 3
+        model = DeepLabv3_plus(in_channels=in_channels, num_classes=cfg["net"]["num_classes"], backend=cfg["net"]["backbone"],
                                os=16, pretrained=cfg["net"]["pretrain"] == '', norm_layer=nn.BatchNorm2d)
         # if not args.resume:
         #     loger.info(f"Model from NAIC DeeplabV3Plus from {model_path}..........")
@@ -102,7 +103,8 @@ def main():
         modules_head = [model.aspp_pooling, model.cbr_low, model.cbr_last]
     elif cfg['net']["base_model"] == "unet":
         from u2pl.unet.unet import Unet
-        model = Unet(num_classes=cfg["net"]["num_classes"], pretrained=False, backbone=cfg["net"]["backbone"])
+        in_channels = cfg["net"]["in_channels"] if cfg["net"].get("in_channels") else 3
+        model = Unet(num_classes=cfg["net"]["num_classes"], pretrained=False, backbone=cfg["net"]["backbone"], in_channels=in_channels)
         modules_back = [model.resnet]
         modules_head = [model.up_concat1, model.up_concat2, model.up_concat3, model.up_concat4, model.final]
         # model.freeze_backbone()
@@ -231,6 +233,11 @@ def main():
         prec, iou_cls = validate(model, val_loader, epoch)
 
         if rank == 0:
+            if rank == 0:
+                for i, iou in enumerate(iou_cls):
+                    logger.info(" * class [{}] IoU {:.2f}".format(CLASSES_need[i], iou * 100))  #
+                logger.info(" * epoch {} mIoU {:.2f}".format(epoch, prec * 100))
+
             state = {
                 "epoch": epoch,
                 "model_state": model.state_dict(),
@@ -485,10 +492,10 @@ def validate(
         log.write('\n')
         log.flush()
 
-        if rank == 0:
-            for i, iou in enumerate(iou_class):
-                logger.info(" * class [{}] IoU {:.2f}".format(i, iou * 100))
-            logger.info(" * epoch {} mIoU {:.2f}".format(epoch, mIoU * 100))
+        # if rank == 0:
+        #     for i, iou in enumerate(iou_class):
+        #         logger.info(" * class [{}] IoU {:.2f}".format(i, iou * 100))
+        #     logger.info(" * epoch {} mIoU {:.2f}".format(epoch, mIoU * 100))
 
         return mIoU, iou_class
 

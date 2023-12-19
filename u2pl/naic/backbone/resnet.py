@@ -97,7 +97,7 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, output_stride=16, norm_layer=SyncBN2d):
+    def __init__(self, block, layers, output_stride=16, norm_layer=SyncBN2d, in_channels=3):
         if output_stride == 16:
             dilations = [1, 1, 1, 2]
             strides = [1, 2, 2, 1]
@@ -111,7 +111,7 @@ class ResNet(nn.Module):
             raise Warning("output_stride must be 8 or 16 or None!")
         self.inplanes = 64
         super(ResNet, self).__init__()
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.bn1 = norm_layer(64)
         self.relu = nn.ReLU(inplace=True)
@@ -164,71 +164,77 @@ class ResNet(nn.Module):
 
     def _load_pretrained_model(self, pretrain_dict):
         model_dict = {}
+        ignore_keys = []
         state_dict = self.state_dict()
         for k, v in pretrain_dict.items():
             if k in state_dict:
+                if v.shape != state_dict[k].shape:
+                    ignore_keys.append(k)
+                    loguru.logger.info("caution: size-mismatch key: {} size: {} -> {}".format(
+                            k, v.shape, state_dict[k].shape))
+                    continue
                 model_dict[k] = v
         state_dict.update(model_dict)
         self.load_state_dict(state_dict)
 
 
-def resnet18(pretrained=False, output_stride=None, **kwargs):
+def resnet18(pretrained=False, output_stride=None, in_channels=3, **kwargs):
     """Constructs a ResNet-18 model.
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = ResNet(BasicBlock, [2, 2, 2, 2], output_stride, **kwargs)
+    model = ResNet(BasicBlock, [2, 2, 2, 2], output_stride, in_channels=in_channels, **kwargs)
     if pretrained:
         model._load_pretrained_model(model_zoo.load_url(model_urls['resnet18']))
     return model
 
 
-def resnet34(pretrained=False, output_stride=None, **kwargs):
+def resnet34(pretrained=False, output_stride=None, in_channels=3, **kwargs):
     """Constructs a ResNet-34 model.
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = ResNet(BasicBlock, [3, 4, 6, 3], output_stride, **kwargs)
+    model = ResNet(BasicBlock, [3, 4, 6, 3], output_stride, in_channels=in_channels, **kwargs)
     if pretrained:
         model._load_pretrained_model(torch.load("./resnet34-333f7ec4.pth.pth"))
     return model
 
 
-def resnet50(pretrained=False, output_stride=None, **kwargs):
+def resnet50(pretrained=False, output_stride=None, in_channels=3, **kwargs):
     """Constructs a ResNet-50 model.
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = ResNet(Bottleneck, [3, 4, 6, 3], output_stride, **kwargs)
+    model = ResNet(Bottleneck, [3, 4, 6, 3], output_stride, in_channels=in_channels, **kwargs)
     if pretrained:
+        loguru.logger.info("==> Loading backbone from [E:/python/ckpt/resnet50-19c8e357.pth]")
         model._load_pretrained_model(torch.load("E:/python/ckpt/resnet50-19c8e357.pth"))
-        loguru.logger.info("==> load backbone from [E:/python/ckpt/resnet50-19c8e357.pth]")
     return model
 
 
-def resnet101(pretrained=False, output_stride=None, **kwargs):
+def resnet101(pretrained=False, output_stride=None, in_channels=3, **kwargs):
     """Constructs a ResNet-101 model.
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = ResNet(Bottleneck, [3, 4, 23, 3], output_stride, **kwargs)
+    model = ResNet(Bottleneck, [3, 4, 23, 3], output_stride, in_channels=in_channels, **kwargs)
     if pretrained:
         model._load_pretrained_model(torch.load("./resnet101-5d3b4d8f.pth"))
         # model._load_pretrained_model(torch.load('/home/zhaojie/zhaojie/ASCNet/Pytorch-ImageSegmentation-master/resnet101-5d3b4d8f.pth'))
     return model
 
 
-def resnet152(pretrained=False, output_stride=None, **kwargs):
+def resnet152(pretrained=False, output_stride=None, in_channels=3, **kwargs):
     """Constructs a ResNet-152 model.
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = ResNet(Bottleneck, [3, 8, 36, 3], output_stride, **kwargs)
+    model = ResNet(Bottleneck, [3, 8, 36, 3], output_stride, in_channels=in_channels, **kwargs)
     if pretrained:
         model._load_pretrained_model(torch.load("./resnet152-b121ed2d.pth"))
     return model

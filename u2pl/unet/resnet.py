@@ -98,7 +98,7 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self, block, layers, num_classes=1000):
+    def __init__(self, block, layers, num_classes=1000, in_channels=3):
         #-----------------------------------------------------------#
         #   假设输入图像为600,600,3
         #   当我们使用resnet50的时候
@@ -106,7 +106,7 @@ class ResNet(nn.Module):
         self.inplanes = 64
         super(ResNet, self).__init__()
         # 600,600,3 -> 300,300,64
-        self.conv1  = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.conv1  = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1    = nn.BatchNorm2d(64)
         self.relu   = nn.ReLU(inplace=True)
         # 300,300,64 -> 150,150,64
@@ -175,8 +175,8 @@ class ResNet(nn.Module):
         feat5   = self.layer4(feat4)
         return [feat1, feat2, feat3, feat4, feat5]
 
-def resnet50(pretrained=False, **kwargs):
-    model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
+def resnet50(pretrained=False, in_channels=3, **kwargs):
+    model = ResNet(Bottleneck, [3, 4, 6, 3], in_channels=in_channels, **kwargs)
     if pretrained:
         model.load_state_dict(model_zoo.load_url('https://s3.amazonaws.com/pytorch/models/resnet50-19c8e357.pth', model_dir='model_data'), strict=False)
     

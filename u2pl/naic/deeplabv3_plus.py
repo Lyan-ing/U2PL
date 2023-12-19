@@ -24,9 +24,9 @@ class DeepLabv3_plus(nn.Module):
                 and hasattr(backend, 'lastconv_channel'):
             self.backend = backend
         elif 'resnet' in backend:
-            self.backend = ResnetBackend(backend, os, pretrained, norm_layer=norm_layer)
+            self.backend = ResnetBackend(backend, os, pretrained, norm_layer=norm_layer, in_channels=self.in_channes)
         elif 'resnext' in backend:
-            self.backend = ResnetBackend(backend, os=None, pretrained=pretrained)
+            self.backend = ResnetBackend(backend, os=None, pretrained=pretrained, in_channels=in_channels)
         elif 'mobilenet' in backend:
             self.backend = MobileNetBackend(backend, os=os, pretrained=pretrained)
         elif 'shufflenet' in backend:
@@ -108,7 +108,7 @@ class DeepLabv3_plus(nn.Module):
 
 
 class ResnetBackend(nn.Module):
-    def __init__(self, backend='resnet18', os=16, pretrained='imagenet', norm_layer=SyncBN2d):
+    def __init__(self, backend='resnet18', os=16, pretrained='imagenet', norm_layer=SyncBN2d, in_channels=3):
         '''
         :param backend: resnet<> or se_resnet
         '''
@@ -118,9 +118,10 @@ class ResnetBackend(nn.Module):
             raise Exception(f"{backend} must in {_all_resnet_models}")
 
         if 'se' in backend:
-            _backend_model = backbone.__dict__[backend](pretrained=pretrained)
+            _backend_model = backbone.__dict__[backend](pretrained=pretrained, in_channels=in_channels)
         else:
-            _backend_model = backbone.__dict__[backend](pretrained=pretrained, output_stride=os, norm_layer=norm_layer)
+            _backend_model = backbone.__dict__[backend](pretrained=pretrained, output_stride=os,
+                                                        norm_layer=norm_layer, in_channels=in_channels)
 
         if 'se' in backend:
             self.low_features = nn.Sequential(_backend_model.layer0,

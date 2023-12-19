@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from PIL import Image
-
+from loguru import logger as loger
 # from skimage.filters import gaussian
 from skimage.measure import label, regionprops
 
@@ -589,7 +589,7 @@ def load_state(path, model, optimizer=None, key="state_dict", type="module"):
 
     if os.path.isfile(path):
         if rank == 0:
-            print("=> loading checkpoint '{}'".format(path))
+            loger.info("=> loading checkpoint '{}'".format(path))
 
         checkpoint = torch.load(path, map_location=map_func)
         if type == "no_module":
@@ -622,7 +622,7 @@ def load_state(path, model, optimizer=None, key="state_dict", type="module"):
                 if v.shape != v_dst.shape:
                     ignore_keys.append(k)
                     if rank == 0:
-                        print(
+                        loger.info(
                             "caution: size-mismatch key: {} size: {} -> {}".format(
                                 k, v.shape, v_dst.shape
                             )
@@ -638,14 +638,14 @@ def load_state(path, model, optimizer=None, key="state_dict", type="module"):
             own_keys = set(model.state_dict().keys())
             missing_keys = own_keys - ckpt_keys
             for k in missing_keys:
-                print("caution: missing keys from checkpoint {}: {}".format(path, k))
+                loger.info("caution: missing keys from checkpoint {}: {}".format(path, k))
 
         if optimizer is not None:
             best_metric = checkpoint["best_miou"]
             last_iter = checkpoint["epoch"]
             optimizer.load_state_dict(checkpoint["optimizer_state"])
             if rank == 0:
-                print(
+                loger.info(
                     "=> also loaded optimizer from checkpoint '{}' (epoch {})".format(
                         path, last_iter
                     )
