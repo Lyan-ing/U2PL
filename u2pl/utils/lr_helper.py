@@ -18,7 +18,7 @@ def get_optimizer(parms, cfg_optim):
     if optim_type == "SGD":
         optimizer = optim.SGD(parms, **optim_kwargs)
     elif optim_type == "adam":
-        optimizer = optim.Adam(parms, **optim_kwargs)
+        optimizer = optim.Adam(parms, betas=(optim_kwargs["momentum"], 0.999), weight_decay=optim_kwargs["weight_decay"])
     else:
         optimizer = None
 

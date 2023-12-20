@@ -80,7 +80,7 @@ def main():
         tb_logger = None
 
     if args.seed is not None:
-        loger.info("set random seed to", args.seed)
+        loger.info(f"==> set random seed to {args.seed}")
         set_random_seed(args.seed)
 
     if rank == 0:

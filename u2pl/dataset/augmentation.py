@@ -106,20 +106,25 @@ class Normalize(object):
     """
 
     def __init__(self, mean, std=None):
-        if std is None:
-            assert len(mean) > 0
-        else:
-            assert len(mean) == len(std)
-            self.std = torch.Tensor(np.float32(std)[:, np.newaxis, np.newaxis])
-        self.mean = torch.Tensor(np.float32(mean)[:, np.newaxis, np.newaxis])
+        self.mean = mean
+        if self.mean is not None:
+            if std is None:
+                assert len(mean) > 0
+            else:
+                assert len(mean) == len(std)
+                self.std = torch.Tensor(np.float32(std)[:, np.newaxis, np.newaxis])
+            self.mean = torch.Tensor(np.float32(mean)[:, np.newaxis, np.newaxis])
 
     def __call__(self, image, label):
-        assert image.size(1) == len(self.mean)
-        if self.std is None:
-            image -= self.mean
+        if self.mean is None:
+            image /= 255
         else:
-            image -= self.mean
-            image /= self.std
+            assert image.size(1) == len(self.mean)
+            if self.std is None:
+                image -= self.mean
+            else:
+                image -= self.mean
+                image /= self.std
         return image, label
 
 
@@ -327,16 +332,22 @@ class RandomColorJitter(object):
 
 
 class ConvertLabel(object):
-    def __init__(self, convert_dict = None):
+    def __init__(self, num_cls, convert_dict=None):
         self.convert_dict = convert_dict
-    def __call__(self, image, label):
-        convert_label = torch.zeros_like(label)
-        for original_val, new_val in self.convert_dict.items():
-            convert_label[label == original_val] = new_val
+        self.num_cls = num_cls
+
+    def __call__(self, image, label, image_nir=None):
+        if self.convert_dict is not None:
+            convert_label = torch.zeros_like(label)
+            for original_val, new_val in self.convert_dict.items():
+                convert_label[label == original_val] = new_val
+        else:
+            convert_label = label.copy()
+        convert_label[convert_label >= self.num_cls] = 0  # set the other label as 0
         # if random.random() < 0.5:
         #     image = torchvision.transforms.ColorJitter(image, contrast=0.5, saturation=0.5, hue=0.5, brightness=0.5)
-            # label = torch.flip(label, [3])
-        return image, convert_label
+        # label = torch.flip(label, [3])
+        return image, convert_label, image_nir
 
 
 class RandomVerticalFlip(object):

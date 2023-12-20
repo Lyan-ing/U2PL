@@ -25,12 +25,12 @@ dataset: # Required.
 
 trainer: # Required.
   epochs: 50
-  sup_only_iter: 0
+  sup_only_iter: 2000
   eval_on: True
   optimizer:
     type: SGD
     kwargs:
-      lr: 0.0002  # 4GPUs
+      lr: 0.00004  # 4GPUs
       momentum: 0.9
       weight_decay: 0.0001
   lr_scheduler:
@@ -57,10 +57,11 @@ saver:
   exp_path: ckpt
   log_path: log
   task_name: dq
-  task_idx: naic_r50_1
+  task_idx: naic_r50_2
 
 criterion:
   type: CELoss
+  cls_weight: []
   kwargs:
     use_weight: False
 

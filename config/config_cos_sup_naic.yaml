@@ -19,34 +19,35 @@ dataset: # Required.
   batch_size: 8
   noise_std: 0.1
   workers: 8
-  mean: [123.675, 116.28, 103.53]
-  std: [58.395, 57.12, 57.375]
+#  mean: [123.675, 116.28, 103.53]
+#  std: [58.395, 57.12, 57.375]
   ignore_label: 255
 
 trainer: # Required.
-  epochs: 50
+  epochs: 100
   start_epochs: 0
   eval_on: True
   optimizer:
-    type: SGD
+    type: adam
     kwargs:
-      lr: 0.0001  # 2GPUs
+      lr: 0.00005  # 2GPUs
       momentum: 0.9
-      weight_decay: 0.0001
+      weight_decay: 0.0
   lr_scheduler:
     mode: poly
     kwargs:
       power: 0.9
+      milestones: [60, 80]
 
 saver:
   exp_path: ckpt
   log_path: log
-  task_name: voc
-  task_idx: naic_r50_6
+  task_name: dq3
+  task_idx: naic_r50_1
 
 criterion:
   type: focal
-  cls_weight: []
+  cls_weight: [2,3,3,2,1,1]
   dice_loss: True
   kwargs:  
     use_weight: False
@@ -57,4 +58,4 @@ net: # Required.
   ema_decay: 0.99
   base_model: naic
   backbone: resnet50
-  pretrain: ''
+  pretrain: 'E:\python\ZEV\U2PL\ckpt\costum\dq\dq_r50_1\best_epoch_weights.pth'
