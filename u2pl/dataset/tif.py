@@ -69,7 +69,12 @@ def build_transfrom(cfg):
     # if cfg["saver"]["task_name"]=="guangxi":
     #     from . import augmentation_label_convert as psp_trsform
     trs_form = []
-    mean, std, ignore_label = cfg["mean"], cfg["std"], cfg["ignore_label"]
+    ignore_label = cfg["ignore_label"]
+    mean, std = None, None
+    if cfg.get("mean"):
+        mean = cfg["mean"]
+    if cfg.get("std"):
+        std = cfg["std"]
     if cfg.get("ColorJitter", False) and cfg["ColorJitter"]:
         trs_form.append(psp_trsform.RandomColorJitter())
     trs_form.append(psp_trsform.ToTensor())
