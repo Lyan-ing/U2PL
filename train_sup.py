@@ -93,7 +93,8 @@ def main():
         from u2pl.naic.deeplabv3_plus import DeepLabv3_plus
         import torch.nn as nn
         in_channels = cfg["net"]["in_channels"] if cfg["net"].get("in_channels") else 3
-        model = DeepLabv3_plus(in_channels=in_channels, num_classes=cfg["net"]["num_classes"], backend=cfg["net"]["backbone"],
+        model = DeepLabv3_plus(in_channels=in_channels, num_classes=cfg["net"]["num_classes"],
+                               backend=cfg["net"]["backbone"],
                                os=16, pretrained=cfg["net"]["pretrain"] == '', norm_layer=nn.BatchNorm2d)
         # if not args.resume:
         #     loger.info(f"Model from NAIC DeeplabV3Plus from {model_path}..........")
@@ -104,7 +105,8 @@ def main():
     elif cfg['net']["base_model"] == "unet":
         from u2pl.unet.unet import Unet
         in_channels = cfg["net"]["in_channels"] if cfg["net"].get("in_channels") else 3
-        model = Unet(num_classes=cfg["net"]["num_classes"], pretrained=False, backbone=cfg["net"]["backbone"], in_channels=in_channels)
+        model = Unet(num_classes=cfg["net"]["num_classes"], pretrained=False, backbone=cfg["net"]["backbone"],
+                     in_channels=in_channels)
         modules_back = [model.resnet]
         modules_head = [model.up_concat1, model.up_concat2, model.up_concat3, model.up_concat4, model.final]
         # model.freeze_backbone()
@@ -184,14 +186,22 @@ def main():
         yaml.dump(cfg, yf)
 
     # Start to train model
-    CLASSES_need = {
-        0: "background",
-        1: "building",
-        2: "grass",
-        3: "tree",
-        4: "water",
-        5: "tea"
-    }
+    if not cfg['dataset'].get('category', False):
+        CLASSES_need = {
+            0: "background",
+            1: "building",
+            2: "grass",
+            3: "tree",
+            4: "water",
+            5: "tea"
+        }
+    else:
+        if isinstance(cfg['dataset']['category'], dict):
+            CLASSES_need = {
+                0: "background"}
+            CLASSES_need.update(cfg['dataset']['category'])
+        else:
+            loger.error("Need category")
     # CLASSES_need = {
     #     0: "laingshi",
     #     1: "laohuang",
@@ -283,7 +293,7 @@ def main():
                     best_prec * 100
                 )
             )
-            tb_logger.add_scalar("mIoU", prec, epoch)
+            tb_logger.add_scalar("AmIoU", prec, epoch)
             for i, iou in enumerate(iou_cls):
                 tb_logger.add_scalar(f"IoU/{CLASSES_need[i]}", iou, epoch)
     with open(osp.join(cfg["save_path"], 'log.json'), 'a', encoding='utf-8') as log:
@@ -350,7 +360,7 @@ def train(  # 蓝，青，绿
                 loss_criterion.update(loss.item())
                 loss_dice = dice_loss(pred, label)
                 losses_dice.update(loss_dice.item())
-                loss +=loss_dice
+                loss += loss_dice
 
             optimizer.zero_grad()
             loss.backward()
@@ -385,7 +395,7 @@ def train(  # 蓝，青，绿
                             lr=learning_rates,
                         )
                     )
-                    dict_json = {"FLAG": "[Train]", "Epoch": f"[{epoch}/{all_epoch}]", "Iter": f"[{i_iter}/{all_iter}]",
+                    dict_json = {"FLAG": "[Train]", "Epoch": f"[{epoch}/{all_epoch}]", "Iter": f"[{step}/{len_iter}]",
                                  "Loss": f"{losses.val:.4f} ({losses.avg:.4f}) ",
                                  "CE Loss": f"{loss_criterion.val:.4f} ({loss_criterion.avg:.4f})",
                                  "Dice Loss": f"{losses_dice.val:.4f} ({losses_dice.avg:.4f})",
@@ -407,7 +417,7 @@ def train(  # 蓝，青，绿
                             lr=learning_rates,
                         )
                     )
-                    dict_json = {"FLAG": "[Train]", "Epoch": f"[{epoch}/{all_epoch}]", "Iter": f"[{i_iter}/{all_iter}]",
+                    dict_json = {"FLAG": "[Train]", "Epoch": f"[{epoch}/{all_epoch}]", "Iter": f"[{step}/{len_iter}]",
                                  "Loss": f"{losses.val:.4f} ({losses.avg:.4f}) ",
                                  "LR": f"{learning_rates.val:.5f} ({learning_rates.avg:.5f})",
                                  "Time": f"{batch_times.val:.2f} ({batch_times.avg:.2f})"}
