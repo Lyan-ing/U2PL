@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from . import backbone
 from .pooling_block import ASPPBlock
 from .sync_batchnorm.batchnorm import SynchronizedBatchNorm2d as SyncBN2d
-
+# from u2pl.utils.label_smoothing import LabelSmoothing
 
 class DeepLabv3_plus(nn.Module):
     def __init__(self, in_channels, num_classes, backend='resnet18', os=16, pretrained='imagenet',
@@ -70,8 +70,10 @@ class DeepLabv3_plus(nn.Module):
                                                 norm_layer(self.aspp_out_channel),
                                                 nn.ReLU(inplace=True),
                                                 nn.Conv2d(self.aspp_out_channel, self.aspp_out_channel, kernel_size=1))
+        # if 0:
+        #     self.smooth = LabelSmoothing(11, self.num_classes)
 
-    def forward(self, x, upper=False):
+    def forward(self, x, upper=False, y=None):
         h, w = x.size()[2:]
         low_features, x = self.backend(x)
         x = self.aspp_pooling(x)

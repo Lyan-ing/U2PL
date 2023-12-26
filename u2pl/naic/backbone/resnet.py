@@ -210,8 +210,9 @@ def resnet50(pretrained=False, output_stride=None, in_channels=3, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 4, 6, 3], output_stride, in_channels=in_channels, **kwargs)
     if pretrained:
-        loguru.logger.info("==> Loading backbone from [E:/python/ckpt/resnet50-19c8e357.pth]")
-        model._load_pretrained_model(torch.load("E:/python/ckpt/resnet50-19c8e357.pth"))
+        r50_path = r"E:\python\ckpt\rsp_r50.pth"
+        loguru.logger.info(f"==> Loading backbone from [{r50_path}]")
+        model._load_pretrained_model(torch.load(r50_path))
     return model
 
 

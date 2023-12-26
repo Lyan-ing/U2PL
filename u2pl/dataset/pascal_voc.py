@@ -184,7 +184,10 @@ def build_costum_loader(split, all_cfg, seed=0):
 
     # build sampler
     sample = DistributedSampler(dset)
-
+    if split == 'val':
+        drop = False
+    else:
+        drop = True
     loader = DataLoader(
         dset,
         batch_size=batch_size,
@@ -192,6 +195,7 @@ def build_costum_loader(split, all_cfg, seed=0):
         sampler=sample,
         shuffle=False,
         pin_memory=False,
+        drop_last=drop
     )
     return loader
 

@@ -81,3 +81,12 @@ class LabelSmoothing(nn.Module):
         softlabel_mask = torch.from_numpy(softlabel_mask).cuda(device=log_p.device).float()
         loss = torch.sum(onehot_mask*log_p+softlabel_mask*log_p,dim=1).mean()
         return -loss
+
+def main():
+    smooth = LabelSmoothing(11,6)
+    img = torch.rand((2,6,10,10))
+    a = smooth()
+    print()
+
+if __name__ == "__main__":
+    main()
