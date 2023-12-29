@@ -1,0 +1,65 @@
+dataset: # Required.
+  type: costum_tif
+  data_root: E:\dataset\GF1_WHU dataset\train
+  convertLabel:  {200: 2, 100: 1}
+  train:
+    data_list: train.txt
+    flip: True
+    GaussianBlur: True
+    ColorJitter: True
+    rand_resize: [0.5, 1.5]
+    convertLabel:  {200: 2, 100: 1}
+    #rand_rotation: [-10.0, 10.0]
+    crop:
+      type: rand
+      size: [512, 512] # crop image with HxW size
+  val:
+    data_list: val.txt
+    convertLabel:  {200: 2, 100: 1}
+    crop:
+      type: center
+      size: [512,512] # crop image with HxW size
+  batch_size: 8
+  noise_std: 0.1
+  workers: 8
+  category: {1: "cloud", 2: "fill"}
+#  mean: [123.675, 116.28, 103.53]
+#  std: [58.395, 57.12, 57.375]
+  ignore_label: 255
+
+trainer: # Required.
+  epochs: 100
+  start_epochs: 0
+  eval_on: True
+  optimizer:
+    type: adam
+    kwargs:
+      lr: 0.00004  # 2GPUs
+      momentum: 0.9
+      weight_decay: 0.0
+  lr_scheduler:
+    mode: poly
+    kwargs:
+      power: 0.9
+      milestones: [60, 80]
+
+saver:
+  exp_path: ckpt
+  log_path: log
+  task_name: cloud
+  task_idx: naic_r50_4
+
+criterion:
+  type: focal
+  cls_weight: [1,10,0.1]
+  dice_loss: True
+  kwargs:  
+    use_weight: False
+
+net: # Required.
+  num_classes: 3
+  sync_bn: True
+  ema_decay: 0.99
+  base_model: naic
+  backbone: resnet50
+  pretrain: 'E:\python\ZEV\U2PL\ckpt\costum_tif\cloud\naic_r50_3\best_epoch_weights.pth'

@@ -33,7 +33,7 @@ class BaseDataset(Dataset):
                 self.list_sample = [
                     [
                         "jpg/{}".format(line.strip()),
-                        "anno/{}.png".format(line.strip().split('.')[0]),
+                        "anno/{}".format(line.strip()),
                     ]
                     for line in open(d_list, "r")
                 ]
