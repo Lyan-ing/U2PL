@@ -20,13 +20,14 @@ from .base import BaseDataset
 # from .base import BaseDataset
 class tif_dset(BaseDataset):
     def __init__(
-            self, data_root, data_list, data_type, trs_form, seed=0, n_sup=10582, split="val", mode='label'
+            self, data_root, data_list, data_type, trs_form, seed=0, n_sup=10582, split="val", mode='label', num_cls = 21
     ):
         self.mode = mode
         super(tif_dset, self).__init__(data_list, data_type)
         self.data_root = data_root
         # self.mode = mode
         self.transform = trs_form
+        self.num_cls = num_cls
         random.seed(seed)
         if split == "train" and len(self.list_sample) > n_sup:
             self.list_sample_new = random.sample(self.list_sample, n_sup)
@@ -46,12 +47,15 @@ class tif_dset(BaseDataset):
         image_tif = gdal.Open(image_path).ReadAsArray()
         # scale to 255
         image_rgb = image_tif[:3]
-        image_rgb = (image_rgb - image_rgb.min()) / (image_rgb.max() - image_rgb.min()) * 255
-        image_nir = image_tif[3]
-        image_nir = (image_nir - image_nir.min()) / (image_nir.max() - image_nir.min()) * 255
+        # image_rgb = image_rgb / image_rgb.max() * 255 #(image_rgb - image_rgb.min()) / (image_rgb.max() - image_rgb.min()) * 255
         image = Image.fromarray(image_rgb.transpose(1, 2, 0), mode="RGB")
-        image_nir = Image.fromarray(image_nir, mode="L")
-        if self.mode == 'label':  # 無標簽數據生成全0mask
+        if len(image_tif)>3:
+            image_nir = image_tif[3]
+            # image_nir = image_nir / image_nir.max() * 255
+            image_nir = Image.fromarray(image_nir, mode="L")
+        else:
+            image_nir = None
+        if self.mode == 'label':  # 無標簽數據生成 全0mask
             label_path = os.path.join(self.data_root, self.list_sample_new[index][1])
             label = Image.open(label_path)
         else:
@@ -78,6 +82,8 @@ def build_transfrom(cfg):
     if cfg.get("ColorJitter", False) and cfg["ColorJitter"]:
         trs_form.append(psp_trsform.RandomColorJitter())
     trs_form.append(psp_trsform.ToTensor())
+    if cfg.get("convertLabel", False):
+        trs_form.append(psp_trsform.ConvertLabel(cfg["num_classes"], cfg["convertLabel"]))
     trs_form.append(psp_trsform.Normalize(mean=mean, std=std))
     if cfg.get("resize", False):
         trs_form.append(psp_trsform.Resize(cfg["resize"]))
@@ -134,6 +140,7 @@ def build_costum_tif_loader(split, all_cfg, seed=0):
 
     cfg = copy.deepcopy(cfg_dset)
     cfg.update(cfg.get(split, {}))
+    cfg.update({"num_classes": all_cfg["net"]["num_classes"]})
 
     workers = cfg.get("workers", 2)
     batch_size = cfg.get("batch_size", 1)
