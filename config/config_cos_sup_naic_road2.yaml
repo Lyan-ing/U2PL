@@ -1,0 +1,61 @@
+dataset: # Required.
+  type: costum
+  data_root: D:\DATA\road
+  train:
+    data_list: train.txt
+    flip: True
+    GaussianBlur: False
+    ColorJitter: True
+    rand_resize: [0.25, 1.25]
+    #rand_rotation: [-10.0, 10.0]
+    crop:
+      type: rand
+      size: [256, 256] # crop image with HxW size
+  val:
+    data_list: val.txt
+    crop:
+      type: center
+      size: [256,256] # crop image with HxW size
+  batch_size: 32
+  noise_std: 0.1
+  workers: 8
+#  mean: [123.675, 116.28, 103.53]
+#  std: [58.395, 57.12, 57.375]
+  ignore_label: 255
+
+trainer: # Required.
+  epochs: 20
+  start_epochs: 0
+  eval_on: True
+  optimizer:
+    type: adam
+    kwargs:
+      lr: 0.0001  # 2GPUs
+      momentum: 0.9
+      weight_decay: 0.0
+  lr_scheduler:
+    mode: poly
+    kwargs:
+      power: 0.9
+      milestones: [60, 80]
+
+saver:
+  exp_path: ckpt
+  log_path: log
+  task_name: road
+  task_idx: naic_r50_2
+
+criterion:
+  type: focal
+  cls_weight: [1,100]
+  dice_loss: True
+  kwargs:  
+    use_weight: False
+
+net: # Required.
+  num_classes: 2
+  sync_bn: True
+  ema_decay: 0.99
+  base_model: naic
+  backbone: resnet50
+  pretrain: 'E:\python\ZEV\U2PL\ckpt\costum\road\naic_r50_1\best_epoch_weights.pth'
