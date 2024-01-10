@@ -1,11 +1,12 @@
 dataset: # Required.
   type: costum
-    data_root: D:\DATA\DQ
+  data_root: D:\DQ
   train:
     data_list: train.txt
     flip: True
     GaussianBlur: False
-#    rand_resize: [0.5, 2.0]
+    ColorJitter: True
+    rand_resize: [ 0.5, 2.0 ]
     #rand_rotation: [-10.0, 10.0]
     crop:
       type: rand
@@ -23,29 +24,32 @@ dataset: # Required.
   ignore_label: 255
 
 trainer: # Required.
-  epochs: 50
+  epochs: 100
   start_epochs: 0
   eval_on: True
   optimizer:
     type: SGD
     kwargs:
-      lr: 0.0004  # 2GPUs
+      lr: 0.0001  # 2GPUs
       momentum: 0.9
       weight_decay: 0.0001
   lr_scheduler:
-    mode: poly
+    mode: step
     kwargs:
       power: 0.9
+      milestones: [60, 80]
 
 saver:
   exp_path: ckpt
   log_path: log
-  task_name: dq
-  task_idx: dq_unet_2
+  task_name: dq0
+  task_idx: unet_r50_1
 
 criterion:
-  type: CELoss
-  kwargs:  
+  type: focal
+  cls_weight: []
+  dice_loss: True
+  kwargs:
     use_weight: False
 
 net: # Required.
