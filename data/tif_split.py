@@ -31,8 +31,8 @@ def cut_georeferenced_image(input_path, output_dir, tile_size):
                     dst.write(data)
 
 # 用法示例
-input_tif = r'GF7_DLC_W11.4_N11.4_20220622_L1A0000852849-BWDMUX.tiff'
-output_directory = r'E:\python\ZEV\U2PL\cloud\unlabel'
+input_tif = r'E:\dataset\20231108_影像挑选\GF7_DLC_W11.4_N11.4_20220622_L1A0000852849-BWDMUX_mask.tiff'
+output_directory = r'E:\python\ZEV\U2PL\cloud\anno'
 tile_size = 512  # 调整为适当的大小
 
 
