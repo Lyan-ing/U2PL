@@ -54,7 +54,10 @@ def get_loader(cfg, seed=0):
 
     elif cfg_dataset["type"] == "costum_tif":
         train_loader_sup = build_costum_tif_loader("train", cfg, seed=seed)
-        val_loader = build_costum_tif_loader("val", cfg)
+        if cfg_dataset.get("test", False):
+            val_loader = build_costum_tif_loader("test", cfg)
+        else:
+            val_loader = build_costum_tif_loader("val", cfg)
         logger.info("Get loader Done...")
         return train_loader_sup, val_loader
     else:

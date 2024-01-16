@@ -33,7 +33,16 @@ class BaseDataset(Dataset):
                 self.list_sample = [
                     [
                         "jpg/{}".format(line.strip()),
-                        "anno/{}".format(line.strip()),
+                        "anno/{}.png".format(line.strip()[:-4]),
+                    ]
+                    for line in open(d_list, "r")
+                ]
+        elif data_type == 'costum_semi':  # 自定義數據集的處理：不固定尾綴
+            if self.mode == 'label':
+                self.list_sample = [
+                    [
+                        "jpg/{}".format(line.strip()),
+                        "anno/{}.png".format(line.strip()[:-4]),
                     ]
                     for line in open(d_list, "r")
                 ]
