@@ -20,18 +20,19 @@ from .base import BaseDataset
 # from .base import BaseDataset
 class tif_dset(BaseDataset):
     def __init__(
-            self, data_root, data_list, data_type, trs_form, seed=0, n_sup=10582, split="val", mode='label', num_cls = 21
+            self, data_root, data_list, data_type, trs_form, seed=0, n_sup=10582, split="val", mode='label', num_cls=21
     ):
         self.mode = mode
+        self.split = split
         super(tif_dset, self).__init__(data_list, data_type)
         self.data_root = data_root
         # self.mode = mode
         self.transform = trs_form
         self.num_cls = num_cls
         random.seed(seed)
-        if split == "train" and len(self.list_sample) > n_sup:
+        if data_type == "costum_semi" and len(self.list_sample) > n_sup:
             self.list_sample_new = random.sample(self.list_sample, n_sup)
-        elif split == "train" and len(self.list_sample) < n_sup:
+        elif data_type == "costum_semi" and len(self.list_sample) < n_sup:
             num_repeat = math.ceil(n_sup / len(self.list_sample))
             self.list_sample = self.list_sample * num_repeat
 
@@ -49,20 +50,27 @@ class tif_dset(BaseDataset):
         image_rgb = image_tif[:3]
         # image_rgb = image_rgb / image_rgb.max() * 255 #(image_rgb - image_rgb.min()) / (image_rgb.max() - image_rgb.min()) * 255
         image = Image.fromarray(image_rgb.transpose(1, 2, 0), mode="RGB")
-        if len(image_tif)>3:
-            image_nir = image_tif[3]
+        if len(image_tif) > 3:
+            image_nir = image_tif[3:]
             # image_nir = image_nir / image_nir.max() * 255
-            image_nir = Image.fromarray(image_nir, mode="L")
+            if len(image_nir)>1:
+                mode = "RGB"
+                image_nir = Image.fromarray(image_nir.transpose(1, 2, 0), mode=mode)
+            else:
+                mode = "L"
+                image_nir = Image.fromarray(image_nir, mode=mode)
         else:
             image_nir = None
-        if self.mode == 'label':  # 無標簽數據生成 全0mask
-            label_path = os.path.join(self.data_root, self.list_sample_new[index][1])
-            label = Image.open(label_path)
+        label_path = os.path.join(self.data_root, self.list_sample_new[index][1].replace('_sat', ''))
+        if self.mode == 'label' and os.path.exists(label_path):  # 无标签数据生成 全0mask
+            label = Image.open(label_path).convert("L")
         else:
             label = Image.fromarray(np.zeros((image.size[1], image.size[0]), dtype=np.uint8))
         image, label, img_nir = self.transform(image, label, image_nir)
         if image_nir is not None:
             image = torch.cat((image, img_nir), dim=1)
+        if self.split == 'test':
+            return image[0], label[0, 0].long(), os.path.basename(image_path)
         return image[0], label[0, 0].long()
 
     def __len__(self):
@@ -146,10 +154,13 @@ def build_costum_tif_loader(split, all_cfg, seed=0):
     batch_size = cfg.get("batch_size", 1)
     if split == "val":
         batch_size = int(batch_size * 1.5)
+    elif split == 'test':
+        batch_size = 1
+        # mode = 'no_label'
     # n_sup = cfg.get("n_sup", 10582)
     # build transform
     trs_form = build_transfrom(cfg)
-    dset = tif_dset(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"]), 'costum', trs_form=trs_form,
+    dset = tif_dset(cfg["data_root"], os.path.join(cfg["data_root"], cfg["data_list"]), 'costum', trs_form=trs_form, split=split,
                     seed=seed)
 
     # build sampler
@@ -162,6 +173,7 @@ def build_costum_tif_loader(split, all_cfg, seed=0):
         sampler=sample,
         shuffle=False,
         pin_memory=False,
+        drop_last=True
     )
     return loader
 
@@ -255,11 +267,11 @@ def build_costum_semi_loader(split, all_cfg, seed=0):
         loguru.logger.info(f"训练样本数量为 2 * {n_sup}")
         # .replace("labeled.txt", "unlabeled.txt")
         dset_unsup = tif_dset(
-            cfg["data_root"], data_list_unsup, 'costum', trs_form_unsup, seed, n_sup, split=split, mode="unlabel"
+            cfg["data_root"], data_list_unsup, 'costum_semi', trs_form_unsup, seed, n_sup, split=split, mode="unlabel"
         )
         # n_sup = len(dset_unsup.list_sample_new)  # 計算一下無標記圖像的數量，將標籤圖像重複採樣至於無標記圖像相同
 
-    dset = tif_dset(cfg["data_root"], data_list, 'costum', trs_form, seed, n_sup,
+    dset = tif_dset(cfg["data_root"], data_list, 'costum_semi', trs_form, seed, n_sup,
                     split)
 
     if split == "val":
