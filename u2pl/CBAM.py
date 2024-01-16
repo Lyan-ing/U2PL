@@ -106,8 +106,8 @@ class Spatial_Attention_Module(nn.Module):
 
 
 class CBAMBlock(nn.Module):
-    def __init__(self, channel_attention_mode: str, spatial_attention_kernel_size: int, channels: int = None,
-                 ratio: int = None, gamma: int = None, b: int = None):
+    def __init__(self, channel_attention_mode: str, channels: int = None, spatial_attention_kernel_size: int = 5,
+                 ratio: int = 16, gamma: int = 2, b: int = 1):
         super(CBAMBlock, self).__init__()
         if channel_attention_mode == "FC":
             assert channels is not None and ratio is not None and channel_attention_mode == "FC", \
@@ -120,7 +120,7 @@ class CBAMBlock(nn.Module):
         else:
             assert channel_attention_mode in ["FC", "Conv"], \
                 "channel attention block must be 'FC' or 'Conv'"
-        self.spatial_attention_block = Spatial_Attention_Module(k=spatial_attention_kernel_size)
+        self.spatial_attention_block = Spatial_Attention_Module(spatial_attention_kernel_size)
 
     def forward(self, x):
         x = self.channel_attention_block(x)
@@ -130,7 +130,7 @@ class CBAMBlock(nn.Module):
 
 if __name__ == "__main__":
     feature_maps = torch.randn((8, 54, 32, 32))
-    model = CBAMBlock("FC", 5, channels=54, ratio=9)
+    model = CBAMBlock("FC", channels=54)
     model(feature_maps)
-    model = CBAMBlock("Conv", 5, channels=54, gamma=2, b=1)
+    model = CBAMBlock("Conv", channels=54)
     model(feature_maps)
