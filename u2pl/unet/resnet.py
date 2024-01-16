@@ -1,5 +1,7 @@
 import math
 
+import loguru
+import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 
@@ -54,6 +56,7 @@ class BasicBlock(nn.Module):
 
 class Bottleneck(nn.Module):
     expansion = 4
+
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
                  base_width=64, dilation=1, norm_layer=None):
         super(Bottleneck, self).__init__()
@@ -99,18 +102,18 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
     def __init__(self, block, layers, num_classes=1000, in_channels=3):
-        #-----------------------------------------------------------#
+        # -----------------------------------------------------------#
         #   假设输入图像为600,600,3
         #   当我们使用resnet50的时候
-        #-----------------------------------------------------------#
+        # -----------------------------------------------------------#
         self.inplanes = 64
         super(ResNet, self).__init__()
         # 600,600,3 -> 300,300,64
-        self.conv1  = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1    = nn.BatchNorm2d(64)
-        self.relu   = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
         # 300,300,64 -> 150,150,64
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0, ceil_mode=True) # change
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=0, ceil_mode=True)  # change
         # 150,150,64 -> 150,150,256
         self.layer1 = self._make_layer(block, 64, layers[0])
         # 150,150,256 -> 75,75,512
@@ -119,7 +122,7 @@ class ResNet(nn.Module):
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         # 38,38,1024 -> 19,19,2048
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        
+
         self.avgpool = nn.AvgPool2d(7)
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
@@ -136,9 +139,9 @@ class ResNet(nn.Module):
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
                 nn.Conv2d(self.inplanes, planes * block.expansion,
-                    kernel_size=1, stride=stride, bias=False),
-            nn.BatchNorm2d(planes * block.expansion),
-        )
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes * block.expansion),
+            )
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample))
@@ -163,23 +166,44 @@ class ResNet(nn.Module):
         # x = x.view(x.size(0), -1)
         # x = self.fc(x)
 
-        x       = self.conv1(x)
-        x       = self.bn1(x)
-        feat1   = self.relu(x)
+        x = self.conv1(x)
+        x = self.bn1(x)
+        feat1 = self.relu(x)
 
-        x       = self.maxpool(feat1)
-        feat2   = self.layer1(x)
+        x = self.maxpool(feat1)
+        feat2 = self.layer1(x)
 
-        feat3   = self.layer2(feat2)
-        feat4   = self.layer3(feat3)
-        feat5   = self.layer4(feat4)
+        feat3 = self.layer2(feat2)
+        feat4 = self.layer3(feat3)
+        feat5 = self.layer4(feat4)
         return [feat1, feat2, feat3, feat4, feat5]
+
 
 def resnet50(pretrained=False, in_channels=3, **kwargs):
     model = ResNet(Bottleneck, [3, 4, 6, 3], in_channels=in_channels, **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url('https://s3.amazonaws.com/pytorch/models/resnet50-19c8e357.pth', model_dir='model_data'), strict=False)
-    
+        _load_pretrained_model(model, torch.load(r"E:\python\ZEV\U2PL\model_data\resnet50-19c8e357.pth"))
+        loguru.logger.info(r"==> Load model from [E:\python\ZEV\U2PL\model_data\resnet50-19c8e357.pth]")
+        # model.load_state_dict(model_zoo.load_url('https://s3.amazonaws.com/pytorch/models/resnet50-19c8e357.pth', model_dir='model_data'), strict=False)
+
     del model.avgpool
     del model.fc
     return model
+
+
+def _load_pretrained_model(model, pretrain_dict):
+    model_dict = {}
+    ignore_keys = []
+    state_dict = model.state_dict()
+    for k, v in pretrain_dict.items():
+        if k in state_dict:
+            if v.shape != state_dict[k].shape:
+                ignore_keys.append(k)
+                loguru.logger.info("caution: size-mismatch key: {} size: {} -> {}".format(
+                    k, v.shape, state_dict[k].shape))
+                continue
+            model_dict[k] = v
+    loguru.logger.info(f"==> Loaded {len(model_dict)} params, need {len(state_dict)}")
+    loguru.logger.info(f"The following params were not found: {state_dict.keys() - model_dict.keys()}")
+    state_dict.update(model_dict)
+    model.load_state_dict(state_dict)

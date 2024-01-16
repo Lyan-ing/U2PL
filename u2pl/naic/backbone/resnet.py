@@ -175,6 +175,8 @@ class ResNet(nn.Module):
                     continue
                 model_dict[k] = v
         state_dict.update(model_dict)
+        loguru.logger.info(f"==> Loaded {len(model_dict)} params, need {len(state_dict)}")
+        loguru.logger.info(f"The following params were not found: {state_dict.keys() - model_dict.keys()}")
         self.load_state_dict(state_dict)
 
 
@@ -224,8 +226,10 @@ def resnet101(pretrained=False, output_stride=None, in_channels=3, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 4, 23, 3], output_stride, in_channels=in_channels, **kwargs)
     if pretrained:
-        model._load_pretrained_model(torch.load("./resnet101-5d3b4d8f.pth"))
-        # model._load_pretrained_model(torch.load('/home/zhaojie/zhaojie/ASCNet/Pytorch-ImageSegmentation-master/resnet101-5d3b4d8f.pth'))
+        # model._load_pretrained_model(model_zoo.load_url(model_urls['resnet101']))
+        path = r'E:\python\ZEV\resnet101-5d3b4d8f.pth'
+        model._load_pretrained_model(torch.load(path))
+        loguru.logger.info(f"==> Loading backbone from [ {path} ]")
     return model
 
 
