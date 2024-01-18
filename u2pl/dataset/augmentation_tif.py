@@ -129,6 +129,7 @@ class Normalize(object):
     def __call__(self, image, label, image_nir=None):
         if self.mean is None:
             image /= 255
+            # image[:, 2] = image[:, 2]*50
         else:
             assert image.size(1) == len(self.mean)
             if self.std is None:
@@ -288,6 +289,8 @@ class Crop(object):
             border = (pad_w_half, pad_w - pad_w_half, pad_h_half, pad_h - pad_h_half)
             image = F.pad(image, border, mode="constant", value=0.0)
             label = F.pad(label, border, mode="constant", value=self.ignore_label)
+            if image_nir is not None:
+                image_nir = F.pad(image_nir, border, mode="constant", value=0.0)
         h, w = image.size()[-2:]
         if self.crop_type == "rand":
             h_off = random.randint(0, h - self.crop_h)
@@ -346,7 +349,7 @@ class RandomHorizontalFlip(object):
 
 class RandomColorJitter(object):
     def __init__(self):
-        self.ColorJitter = torchvision.transforms.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.2)
+        self.ColorJitter = torchvision.transforms.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.4)
 
     def __call__(self, image, label, image_nir=None):
         if random.random() < 0.8:
